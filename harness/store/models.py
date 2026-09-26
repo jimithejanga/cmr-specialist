@@ -211,3 +211,26 @@ class ToolAudit(Base):
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class User(Base):
+    """Shed locks: one row per staff member. Passwords are PBKDF2 hashes;
+    the cleartext never touches the database."""
+
+    __tablename__ = "users"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_uid)
+    username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    display_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    password_hash: Mapped[str] = mapped_column(String(256))
+    active: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class UserSession(Base):
+    """Hand stamp: bearer token issued at login, expires automatically."""
+
+    __tablename__ = "user_sessions"
+    token: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64), ForeignKey("users.id"), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

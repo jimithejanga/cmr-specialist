@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 import uvicorn
 
 from configs.settings import settings
+from harness.api import auth as auth_mod
 from harness.agent import guard as guard_mod
 from harness.agent import service as svc
 from harness.api import schemas as S
@@ -38,7 +39,7 @@ app = FastAPI(title="CMR Specialist Agent API", version="2.0.0",
               description="Lean case-centered automation agent (spec v2.0).")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False,
                    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-                   allow_headers=["Content-Type", "X-API-Key", "X-Request-ID"])
+                    allow_headers=["Content-Type", "X-API-Key", "X-Request-ID", "Authorization"])
 
 FRONTEND_PATH = Path(__file__).resolve().parent.parent.parent / "frontend" / "index.html"
 
@@ -96,6 +97,56 @@ def _task_payload(task: M.Task) -> dict[str, Any]:
         "created_at": task.created_at.isoformat() if task.created_at else None,
         "updated_at": task.updated_at.isoformat() if task.updated_at else None,
     }
+
+
+# ── shed locks: login system ───────────────────────────────────────────────
+
+@app.post("/auth/users", tags=["Auth"])
+def register_user(req: S.CreateUserRequest,
+                  authorization: Optional[str] = Header(default=None),
+                  x_api_key: Optional[str] = Header(default=None),
+                  db: Session = Depends(get_db)):
+    """Create a staff login. Open only for the FIRST user (bootstrap);
+    afterwards the caller must already be authenticated."""
+    if db.scalar(select(M.User)) is None:
+        pass  # bootstrap: no users yet, allow creation
+    elif auth_mod.resolve_actor(db, authorization=authorization, x_api_key=x_api_key) is None:
+        raise HTTPException(status_code=401, detail="login required")
+    try:
+        user = auth_mod.create_user(db, username=req.username, password=req.password,
+                                    display_name=req.display_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"id": user.id, "username": user.username, "display_name": user.display_name}
+
+
+@app.post("/auth/login", tags=["Auth"])
+def login(req: S.LoginRequest, db: Session = Depends(get_db)):
+    user = auth_mod.authenticate(db, username=req.username, password=req.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="invalid username or password")
+    sess = auth_mod.issue_session(db, user)
+    return {"token": sess.token, "username": user.username,
+            "display_name": user.display_name,
+            "expires_at": sess.expires_at.isoformat()}
+
+
+@app.post("/auth/logout", tags=["Auth"])
+def logout(authorization: Optional[str] = Header(default=None),
+           db: Session = Depends(get_db)):
+    if authorization and authorization.lower().startswith("bearer "):
+        auth_mod.revoke_session(db, authorization[7:].strip())
+    return {"ok": True}
+
+
+@app.get("/auth/me", tags=["Auth"])
+def me(authorization: Optional[str] = Header(default=None),
+       x_api_key: Optional[str] = Header(default=None),
+       db: Session = Depends(get_db)):
+    actor = auth_mod.resolve_actor(db, authorization=authorization, x_api_key=x_api_key)
+    if not actor:
+        raise HTTPException(status_code=401, detail="login required")
+    return {"actor": actor}
 
 
 # ── root / health ────────────────────────────────────────────────────────────
@@ -206,14 +257,18 @@ def get_task(task_id: str, x_api_key: Optional[str] = Header(default=None),
     approvals = db.scalars(select(M.Approval).where(M.Approval.task_id == task_id)
                            .order_by(M.Approval.created_at.desc())).all()
     payload["approvals"] = [{"id": a.id, "requested_action": a.requested_action,
-                             "decision": a.decision, "reason": a.reason} for a in approvals]
+                             "decision": a.decision, "approver": a.approver,
+                             "reason": a.reason} for a in approvals]
     return payload
 
 
 @app.post("/tasks/{task_id}/approvals", tags=["Tasks"])
 def decide_approval(task_id: str, req: S.ApprovalRequest,
-                    x_api_key: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
+                    x_api_key: Optional[str] = Header(default=None),
+                    authorization: Optional[str] = Header(default=None),
+                    db: Session = Depends(get_db)):
     verify_api_key(x_api_key)
+    actor = auth_mod.resolve_actor(db, authorization=authorization, x_api_key=x_api_key)
     task = db.get(M.Task, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="task not found")
@@ -225,7 +280,7 @@ def decide_approval(task_id: str, req: S.ApprovalRequest,
         ap = R.request_approval(db, task_id=task_id, requested_action="manual approval",
                                 requester="api")
     ap.decision = req.decision
-    ap.approver = req.approver
+    ap.approver = actor or req.approver
     ap.reason = req.reason
     ap.decided_at = datetime.now(timezone.utc)
     if req.decision == "approved":

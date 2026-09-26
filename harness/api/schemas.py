@@ -36,6 +36,17 @@ class PublishVersionRequest(BaseModel):
     pass
 
 
+class LoginRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=256)
+
+
+class CreateUserRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=8, max_length=256)
+    display_name: str | None = Field(default=None, max_length=128)
+
+
 class HealthResponse(BaseModel):
     status: str
     version: str
