@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CMR Admin · MockDB</title>
+<link rel="stylesheet" href="/admin/shared.css"></head>
+<body>
+<header>
+<div><h1>CMR Admin <small>mockDB explorer · TEST DATA ONLY</small></h1></div>
+<nav><a href="/admin" data-p="index">Home</a><a href="/admin/mockdb.html" data-p="mockdb">MockDB</a><a href="/admin/harness.html" data-p="harness">Harness</a><a href="/admin/worker.html" data-p="worker">Worker</a><a href="/admin/knowledge.html" data-p="knowledge">Knowledge</a></nav>
+</header>
+<main>
+<div class="testbanner">TEST DATABASE — rows you insert here are synthetic and NEVER reach a real registry. Web-process view; the worker holds its own copy.</div>
+<div class="card"><h2>Tables</h2>
+<div class="row"><button onclick="load()">Refresh</button><button class="ghost danger" onclick="resetDb()">Reset to seed</button></div>
+<div id="tables"></div>
+</div>
+<div class="card"><h2>Insert test row</h2>
+<div class="row"><select id="tbl"><option value="receipts">receipts</option><option value="vehicles">vehicles</option><option value="profiles">profiles</option><option value="certificates">certificates</option></select></div>
+<textarea id="rec" rows="4" placeholder='{"rrr": "999900001111", "status": "paid", "amount": 5000, "linked_account": "acct-X"}'></textarea>
+<div class="row"><button onclick="insertRow()">Insert as synthetic</button></div>
+<div id="msg" class="mut"></div>
+</div>
+</main>
+<script src="/admin/shared.js"></script>
+<script>
+AdminNav('mockdb');
+async function load() {
+  const r = await fetch('/admin/mockdb', {headers: hdr()});
+  if (r.status === 401 || r.status === 403) { document.getElementById('tables').innerHTML = '<span class="badge bad">admin login required (Home page)</span>'; return; }
+  const j = await r.json();
+  let h = '<p class="mut">' + esc(j.note) + '</p>';
+  for (const t of Object.keys(j.tables)) {
+    const rows = j.tables[t];
+    h += '<h3 style="font-size:13px">' + t + ' <span class="badge">' + Object.keys(rows).length + '</span></h3>';
+    h += '<table><tr><th>key</th><th>row</th></tr>';
+    for (const k of Object.keys(rows)) {
+      const syn = rows[k].synthetic ? ' <span class="badge warn">SYNTHETIC</span>' : '';
+      h += '<tr><td><code>' + esc(k) + '</code></td><td>' + esc(JSON.stringify(rows[k])) + syn + '</td></tr>';
+    }
+    h += '</table>';
+  }
+  h += '<p class="mut">transfers: ' + Object.keys(j.transfers).length + ' · tokens sent: ' + j.tokens_sent.length + ' · faults: ' + esc(JSON.stringify(j.faults)) + '</p>';
+  document.getElementById('tables').innerHTML = h;
+}
+async function insertRow() {
+  let rec; try { rec = JSON.parse(document.getElementById('rec').value); } catch (e) { document.getElementById('msg').textContent = 'invalid JSON'; return; }
+  const t = document.getElementById('tbl').value;
+  const r = await fetch('/admin/mockdb/' + t, {method: 'POST', headers: hdr(), body: JSON.stringify(rec)});
+  document.getElementById('msg').textContent = r.ok ? 'inserted as synthetic' : 'failed: ' + await r.text();
+  if (r.ok) load();
+}
+async function resetDb() {
+  if (!confirm('Reseed mockDB? Synthetic rows will be lost.')) return;
+  await fetch('/admin/mockdb/reset', {method: 'POST', headers: hdr()});
+  load();
+}
+load();
+</script>
+</body></html>

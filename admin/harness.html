@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CMR Admin · Harness</title>
+<link rel="stylesheet" href="/admin/shared.css"></head>
+<body>
+<header>
+<div><h1>CMR Admin <small>harness inspector · READ ONLY</small></h1></div>
+<nav><a href="/admin" data-p="index">Home</a><a href="/admin/mockdb.html" data-p="mockdb">MockDB</a><a href="/admin/harness.html" data-p="harness">Harness</a><a href="/admin/worker.html" data-p="worker">Worker</a><a href="/admin/knowledge.html" data-p="knowledge">Knowledge</a></nav>
+</header>
+<main>
+<div class="card"><h2>Recent cases</h2>
+<div class="row"><button onclick="load()">Refresh</button></div>
+<div id="cases"></div>
+</div>
+<div class="card"><h2>Task detail</h2>
+<div class="row"><input id="tid" placeholder="task id"><button onclick="task()">Inspect</button></div>
+<pre id="tout">{}</pre>
+</div>
+</main>
+<script src="/admin/shared.js"></script>
+<script>
+AdminNav('harness');
+async function load() {
+  const r = await fetch('/admin/cases/recent?limit=20', {headers: hdr()});
+  if (r.status === 401 || r.status === 403) { document.getElementById('cases').innerHTML = '<span class="badge bad">admin login required (Home page)</span>'; return; }
+  const j = await r.json();
+  let h = '<table><tr><th>case</th><th>title</th><th>tasks</th></tr>';
+  for (const c of j.cases) {
+    const ts = c.tasks.map(t => '<span class="badge">' + esc(t.type) + ': ' + esc(t.status) + '</span>').join('');
+    h += '<tr><td><code>' + esc(c.id.slice(0, 8)) + '</code></td><td>' + esc(c.title || '') + '</td><td>' + ts + '</td></tr>';
+  }
+  document.getElementById('cases').innerHTML = h + '</table>';
+}
+async function task() {
+  const id = document.getElementById('tid').value.trim();
+  if (!id) return;
+  const r = await fetch('/tasks/' + id, {headers: hdr()});
+  document.getElementById('tout').textContent = JSON.stringify(await r.json(), null, 2);
+}
+load();
+</script>
+</body></html>

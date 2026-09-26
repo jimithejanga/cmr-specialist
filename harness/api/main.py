@@ -38,8 +38,14 @@ WORKER_HEARTBEAT: dict[str, Any] = {"last_seen": None}
 app = FastAPI(title="CMR Specialist Agent API", version="2.0.0",
               description="Lean case-centered automation agent (spec v2.0).")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False,
-                   allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+                    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
                     allow_headers=["Content-Type", "X-API-Key", "X-Request-ID", "Authorization"])
+
+from harness.api.admin import router as admin_router  # noqa: E402
+
+app.include_router(admin_router)
+
+ADMIN_DIR = Path(__file__).resolve().parent.parent.parent / "admin"
 
 FRONTEND_PATH = Path(__file__).resolve().parent.parent.parent / "frontend" / "index.html"
 
@@ -110,14 +116,22 @@ def register_user(req: S.CreateUserRequest,
     afterwards the caller must already be authenticated."""
     if db.scalar(select(M.User)) is None:
         pass  # bootstrap: no users yet, allow creation
-    elif auth_mod.resolve_actor(db, authorization=authorization, x_api_key=x_api_key) is None:
-        raise HTTPException(status_code=401, detail="login required")
+    else:
+        actor = auth_mod.resolve_actor(db, authorization=authorization, x_api_key=x_api_key)
+        if actor is None:
+            raise HTTPException(status_code=401, detail="login required")
+        if req.is_admin and actor != "api-key":
+            caller = db.scalar(select(M.User).where(M.User.username == actor))
+            if not caller or not getattr(caller, "is_admin", 0):
+                raise HTTPException(status_code=403, detail="admin required to grant admin")
     try:
         user = auth_mod.create_user(db, username=req.username, password=req.password,
-                                    display_name=req.display_name)
+                                    display_name=req.display_name,
+                                    make_admin=req.is_admin)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    return {"id": user.id, "username": user.username, "display_name": user.display_name}
+    return {"id": user.id, "username": user.username, "display_name": user.display_name,
+            "is_admin": bool(getattr(user, "is_admin", 0))}
 
 
 @app.post("/auth/login", tags=["Auth"])
@@ -146,7 +160,11 @@ def me(authorization: Optional[str] = Header(default=None),
     actor = auth_mod.resolve_actor(db, authorization=authorization, x_api_key=x_api_key)
     if not actor:
         raise HTTPException(status_code=401, detail="login required")
-    return {"actor": actor}
+    is_admin = False
+    if actor != "api-key":
+        u = db.scalar(select(M.User).where(M.User.username == actor))
+        is_admin = bool(u and getattr(u, "is_admin", 0))
+    return {"actor": actor, "is_admin": is_admin}
 
 
 # ── root / health ────────────────────────────────────────────────────────────
@@ -156,6 +174,23 @@ def root():
     if FRONTEND_PATH.exists():
         return FileResponse(FRONTEND_PATH)
     return HTMLResponse("<h2>CMR Specialist Agent API v2.0</h2><p>Visit <a href='/docs'>/docs</a>.</p>")
+
+
+@app.get("/admin", response_class=HTMLResponse, tags=["Admin"])
+def admin_index():
+    idx = ADMIN_DIR / "index.html"
+    if idx.exists():
+        return FileResponse(idx)
+    return HTMLResponse("<h2>Admin site not installed</h2>")
+
+
+@app.get("/admin/{page}", tags=["Admin"])
+def admin_page(page: str):
+    allowed = {"index.html", "mockdb.html", "harness.html", "worker.html", "knowledge.html",
+               "shared.js", "shared.css"}
+    if page not in allowed:
+        raise HTTPException(status_code=404, detail="no such admin page")
+    return FileResponse(ADMIN_DIR / page)
 
 
 @app.get("/health", tags=["Health"])

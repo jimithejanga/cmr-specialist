@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CMR Admin · Knowledge</title>
+<link rel="stylesheet" href="/admin/shared.css"></head>
+<body>
+<header>
+<div><h1>CMR Admin <small>bulk knowledge upload · upload then publish</small></h1></div>
+<nav><a href="/admin" data-p="index">Home</a><a href="/admin/mockdb.html" data-p="mockdb">MockDB</a><a href="/admin/harness.html" data-p="harness">Harness</a><a href="/admin/worker.html" data-p="worker">Worker</a><a href="/admin/knowledge.html" data-p="knowledge">Knowledge</a></nav>
+</header>
+<main>
+<div class="card"><h2>Bulk upload</h2>
+<p class="mut">Select many PDFs/docs at once. Uploading stages them; each version must still be published before it can ground answers.</p>
+<div class="row"><input type="file" id="files" multiple accept=".pdf,.txt,.md,.docx"></div>
+<div class="row"><button onclick="upload()">Upload all</button><button class="ghost" onclick="publishAll()">Publish all staged</button></div>
+<div style="margin-top:8px"><span class="badge" id="cu">uploaded 0 of 0</span> <span class="badge" id="cp">published 0 of 0</span></div>
+<div id="list"></div>
+</div>
+</main>
+<script src="/admin/shared.js"></script>
+<script>
+AdminNav('knowledge');
+let staged = [];
+async function upload() {
+  const fs = document.getElementById('files').files;
+  staged = [];
+  const cu = document.getElementById('cu'), list = document.getElementById('list');
+  list.innerHTML = '';
+  let done = 0;
+  for (const f of fs) {
+    const fd = new FormData(); fd.append('file', f);
+    const h = {}; const t = localStorage.getItem('cmr_token'); if (t) h['Authorization'] = 'Bearer ' + t;
+    try {
+      const r = await fetch('/knowledge/documents', {method: 'POST', headers: h, body: fd});
+      const j = await r.json();
+      done++;
+      if (r.ok && j.version_id) { staged.push({name: f.name, v: j.version_id}); list.innerHTML += '<div><span class="badge ok">staged</span> ' + esc(f.name) + ' <span class="mut">chunks=' + (j.chunks || '?') + '</span></div>'; }
+      else list.innerHTML += '<div><span class="badge bad">failed</span> ' + esc(f.name) + '</div>';
+    } catch (e) { done++; list.innerHTML += '<div><span class="badge bad">error</span> ' + esc(f.name) + '</div>'; }
+    cu.textContent = 'uploaded ' + done + ' of ' + fs.length;
+  }
+  document.getElementById('cp').textContent = 'published 0 of ' + staged.length;
+}
+async function publishAll() {
+  let n = 0;
+  for (const s of staged) {
+    const r = await fetch('/knowledge/versions/' + s.v + '/publish', {method: 'POST', headers: hdr(), body: '{}'});
+    if (r.ok) n++;
+    document.getElementById('cp').textContent = 'published ' + n + ' of ' + staged.length;
+  }
+}
+</script>
+</body></html>

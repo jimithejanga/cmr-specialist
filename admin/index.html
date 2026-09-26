@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CMR Admin · Console</title>
+<link rel="stylesheet" href="/admin/shared.css"></head>
+<body>
+<header>
+<div><h1>CMR Admin <small>observability · separate from operator console</small></h1></div>
+<nav><a href="/admin" data-p="index">Home</a><a href="/admin/mockdb.html" data-p="mockdb">MockDB</a><a href="/admin/harness.html" data-p="harness">Harness</a><a href="/admin/worker.html" data-p="worker">Worker</a><a href="/admin/knowledge.html" data-p="knowledge">Knowledge</a></nav>
+</header>
+<main>
+<div class="card"><h2>Session</h2>
+<div class="row"><input id="u" placeholder="username" autocomplete="username"><input id="p" type="password" placeholder="password" autocomplete="current-password"></div>
+<div class="row"><button onclick="login()">Sign in</button><button class="ghost" onclick="logout()">Sign out</button></div>
+<div style="margin-top:8px"><span class="badge" id="who">anonymous</span><span class="badge" id="adm">not admin</span></div>
+</div>
+<div class="card"><h2>Pages</h2>
+<p><a style="color:var(--acc)" href="/admin/mockdb.html">MockDB explorer</a> <span class="mut">— browse + insert TEST data, reset to seed</span></p>
+<p><a style="color:var(--acc)" href="/admin/harness.html">Harness inspector</a> <span class="mut">— read-only cases, tasks, approvals</span></p>
+<p><a style="color:var(--acc)" href="/admin/worker.html">Worker monitor</a> <span class="mut">— queue depth, lease, recent outcomes</span></p>
+<p><a style="color:var(--acc)" href="/admin/knowledge.html">Bulk knowledge upload</a> <span class="mut">— many files, uploaded-vs-published counters</span></p>
+</div>
+</main>
+<script src="/admin/shared.js"></script>
+<script>AdminNav('index');whoami();</script>
+</body></html>

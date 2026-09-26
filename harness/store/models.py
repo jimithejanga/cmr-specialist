@@ -223,6 +223,7 @@ class User(Base):
     display_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(256))
     active: Mapped[int] = mapped_column(Integer, default=1)
+    is_admin: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
