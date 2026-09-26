@@ -24,7 +24,8 @@ pre{background:#0b1220;border:1px solid var(--line);border-radius:8px;padding:10
 <body>
 <header>
 <div><h1>CMR Specialist <small>operator console · lean v2.0</small></h1></div>
-<div class="row" style="max-width:420px"><input id="apiKey" value="cmr-secret-key-2026" placeholder="API key"><button class="ghost" onclick="checkHealth()">Health</button></div>
+<div class="row" style="max-width:640px"><input id="apiKey" value="cmr-secret-key-2026" placeholder="API key"><input id="loginUser" placeholder="username" style="max-width:130px"><input id="loginPass" type="password" placeholder="password" style="max-width:130px"><button class="ghost" onclick="doLogin()">Sign in</button><button class="ghost" onclick="doLogout()">Sign out</button><button class="ghost" onclick="checkHealth()">Health</button></div>
+<div class="row"><span class="badge" id="whoami">anonymous</span></div>
 </header>
 <main>
 <div>
@@ -64,7 +65,9 @@ pre{background:#0b1220;border:1px solid var(--line);border-radius:8px;padding:10
 const API = location.host ? '' : 'http://localhost:8080';
 let lastCase=null,lastTask=null;
 const $=id=>document.getElementById(id);
-const hdr=()=>({'Content-Type':'application/json','X-API-Key':$('apiKey').value});
+const hdr=()=>{const h={'Content-Type':'application/json','X-API-Key':$('apiKey').value};const t=localStorage.getItem('cmr_token');if(t)h['Authorization']='Bearer '+t;return h;};
+async function doLogin(){const r=await fetch(API+'/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:$('loginUser').value,password:$('loginPass').value})});const j=await r.json();if(r.ok&&j.token){localStorage.setItem('cmr_token',j.token);$('whoami').textContent='signed in: '+j.username;$('loginPass').value='';say('login ok '+j.username);}else{say('login failed '+(j.detail||r.status));}}
+async function doLogout(){try{await fetch(API+'/auth/logout',{method:'POST',headers:hdr()});}catch(e){}localStorage.removeItem('cmr_token');$('whoami').textContent='anonymous';say('signed out');}
 function say(m){$('log').textContent=new Date().toLocaleTimeString()+' '+m+'\n'+$('log').textContent;}
 async function checkHealth(){const r=await fetch(API+'/health');say('health: '+await r.text());}
 async function createCase(){const b={text:$('caseText').value,title:$('caseTitle').value||null};
