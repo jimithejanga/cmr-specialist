@@ -53,7 +53,7 @@ def mockdb_dump(authorization: Optional[str] = Header(default=None),
                 db: Session = Depends(get_db)):
     _admin(db, authorization, x_api_key)
     m = _db()
-    return {"process": "web", "note": "web-process view; worker holds its own copy",
+    return {"process": "web", "note": "admin inserts persist to the shared overlay file, so the worker sees them too",
             "tables": {t: getattr(m, t) for t in _MOCK_TABLES},
             "transfers": m.transfers, "tokens_sent": m.tokens_sent,
             "faults": m.faults}
@@ -67,6 +67,7 @@ def mockdb_reset(authorization: Optional[str] = Header(default=None),
     from harness.tools import module as _mod
 
     _mod._db = _mod.MockDB.seeded()
+    _mod.clear_overlay()
     return {"ok": True, "note": "web-process mockDB reseeded"}
 
 
@@ -90,6 +91,9 @@ def mockdb_insert(table: str, record: dict[str, Any],
     row["inserted_by"] = admin.username
     row["inserted_at"] = datetime.now(timezone.utc).isoformat()
     getattr(_db(), table)[key] = row
+    from harness.tools import module as _mod
+
+    _mod.save_overlay_row(table, key, row)  # visible to the worker process too
     return {"ok": True, "table": table, "key": key, "synthetic": True}
 
 

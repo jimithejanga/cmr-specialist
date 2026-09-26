@@ -8,7 +8,7 @@
 <nav><a href="/admin" data-p="index">Home</a><a href="/admin/mockdb.html" data-p="mockdb">MockDB</a><a href="/admin/harness.html" data-p="harness">Harness</a><a href="/admin/worker.html" data-p="worker">Worker</a><a href="/admin/knowledge.html" data-p="knowledge">Knowledge</a></nav>
 </header>
 <main>
-<div class="testbanner">TEST DATABASE — rows you insert here are synthetic and NEVER reach a real registry. Web-process view; the worker holds its own copy.</div>
+<div class="testbanner">TEST DATABASE — rows you insert here are synthetic and NEVER reach a real registry. Inserts persist to a shared overlay file, so the worker sees them on its next run.</div>
 <div class="card"><h2>Tables</h2>
 <div class="row"><button onclick="load()">Refresh</button><button class="ghost danger" onclick="resetDb()">Reset to seed</button></div>
 <div id="tables"></div>

@@ -106,6 +106,7 @@ def fire(*, formulation_id: str, arguments: dict | None = None,
     started = time.perf_counter()
     arguments = arguments or {}
     evidence_refs = evidence_refs or []
+    _apply_overlay(_db)
     envelope: dict = {"status": "failed", "error_ref": None, "data": None,
                       "evidence_ref": None, "audit_id": None}
     audit_error: str | None = None
@@ -191,3 +192,62 @@ def reset_mock(**faults) -> None:
     global _db
     _db = MockDB.seeded()
     _db.faults = dict(faults)
+    clear_overlay()
+
+
+def overlay_path() -> str:
+    import os
+
+    return os.getenv("MOCKDB_OVERLAY", "data/mockdb_overlay.json")
+
+
+def _apply_overlay(db: MockDB) -> None:
+    """Apply admin-inserted synthetic rows so every process sees them.
+
+    Additive upserts only: overlay rows merge into the live copy on each
+    fire, so web inserts are visible to the worker without restarts, while
+    in-process writes (transfers, tokens) are never clobbered."""
+    import json as _json
+    import os as _os
+
+    path = overlay_path()
+    if not _os.path.exists(path):
+        return
+    try:
+        with open(path) as fh:
+            overlay = _json.load(fh)
+    except Exception:
+        return
+    if not isinstance(overlay, dict):
+        return
+    for table in ("profiles", "vehicles", "receipts", "certificates"):
+        rows = overlay.get(table)
+        if isinstance(rows, dict):
+            getattr(db, table).update(rows)
+
+
+def save_overlay_row(table: str, key: str, row: dict) -> None:
+    """Persist one admin-inserted row to the shared overlay file."""
+    import json as _json
+    import os as _os
+
+    path = overlay_path()
+    overlay: dict = {}
+    if _os.path.exists(path):
+        try:
+            with open(path) as fh:
+                overlay = _json.load(fh) or {}
+        except Exception:
+            overlay = {}
+    overlay.setdefault(table, {})[key] = row
+    _os.makedirs(_os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w") as fh:
+        _json.dump(overlay, fh, indent=1)
+
+
+def clear_overlay() -> None:
+    import os as _os
+
+    path = overlay_path()
+    if _os.path.exists(path):
+        _os.remove(path)
