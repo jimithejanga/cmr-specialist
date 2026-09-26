@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CMR Specialist — Operator Console (v2.0)</title>
+<style>
+:root{--bg:#0f172a;--panel:#1e293b;--line:#334155;--tx:#f8fafc;--mut:#94a3b8;--acc:#0d9488}
+*{box-sizing:border-box;margin:0;padding:0}body{font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--tx);min-height:100vh}
+header{display:flex;justify-content:space-between;align-items:center;padding:12px 20px;background:var(--panel);border-bottom:1px solid var(--line)}
+h1{font-size:15px}small{color:var(--mut)}
+main{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:16px;max-width:1200px;margin:0 auto}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
+.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin-bottom:10px}
+textarea,input,select{width:100%;background:#0b1220;border:1px solid var(--line);color:var(--tx);border-radius:8px;padding:10px;font-size:13px;margin-bottom:8px}
+button{background:var(--acc);border:none;color:#fff;padding:9px 14px;border-radius:8px;font-weight:600;cursor:pointer;font-size:13px}
+button.ghost{background:#334155}button:disabled{opacity:.5}
+pre{background:#0b1220;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:11px;overflow:auto;max-height:320px;white-space:pre-wrap}
+.row{display:flex;gap:8px}.row>*{flex:1}
+.badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;background:#0b1220;border:1px solid var(--line);margin:2px 4px 2px 0}
+.ok{color:#34d399}.warn{color:#fbbf24}.err{color:#f87171}
+@media(max-width:900px){main{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+<div><h1>CMR Specialist <small>operator console · lean v2.0</small></h1></div>
+<div class="row" style="max-width:420px"><input id="apiKey" value="cmr-secret-key-2026" placeholder="API key"><button class="ghost" onclick="checkHealth()">Health</button></div>
+</header>
+<main>
+<div>
+<div class="card"><h2>1 · New case (question or task)</h2>
+<textarea id="caseText" rows="3" placeholder="e.g. How do I renew my CMR certificate? or: I paid via Remita RRR 123456789012 yesterday for account john@example.com"></textarea>
+<input id="caseTitle" placeholder="Case title (optional)">
+<div class="row"><button onclick="createCase()">Submit work</button><button class="ghost" onclick="resetAll()">Reset</button></div>
+</div>
+<div class="card"><h2>2 · Follow-up on case</h2>
+<input id="caseId" placeholder="case id">
+<textarea id="followText" rows="2" placeholder="Additional information or follow-up question…"></textarea>
+<button onclick="addMessage()">Attach to case</button>
+</div>
+<div class="card"><h2>3 · Queue automation task</h2>
+<div class="row"><select id="taskType"><option value="payment_reconciliation">payment_reconciliation</option><option value="change_of_ownership">change_of_ownership</option><option value="general_support">general_support</option></select>
+<select id="appr"><option value="never">approval: never</option><option value="sensitive">approval: sensitive</option><option value="always">approval: always</option></select></div>
+<textarea id="taskInstr" rows="2" placeholder="Task instructions…"></textarea>
+<div class="row"><button onclick="createTask()">Queue task</button><button class="ghost" onclick="runWorkerOnce()">Run worker once</button></div>
+</div>
+<div class="card"><h2>4 · Knowledge base</h2>
+<div class="row"><input type="file" id="kbFile"><button onclick="uploadDoc()">Upload</button></div>
+<div class="row"><input id="verId" placeholder="version id to publish"><button onclick="publishVer()">Publish</button></div>
+</div>
+</div>
+<div>
+<div class="card"><h2>Case state</h2><div id="statusLine"><span class="badge">no case yet</span></div><pre id="caseOut">{}</pre>
+<div class="row"><button class="ghost" onclick="refreshCase()">Refresh case</button><button class="ghost" onclick="refreshTask()">Refresh task</button></div>
+<input id="taskId" placeholder="task id"></div>
+<div class="card"><h2>Approval</h2>
+<textarea id="apprReason" rows="2" placeholder="Reason (for reject)…"></textarea>
+<div class="row"><button onclick="decide(true)">Approve</button><button class="ghost" onclick="decide(false)">Reject</button></div>
+</div>
+<div class="card"><h2>Activity log</h2><pre id="log"></pre></div>
+</div>
+</main>
+<script>
+const API = location.host ? '' : 'http://localhost:8080';
+let lastCase=null,lastTask=null;
+const $=id=>document.getElementById(id);
+const hdr=()=>({'Content-Type':'application/json','X-API-Key':$('apiKey').value});
+function say(m){$('log').textContent=new Date().toLocaleTimeString()+' '+m+'\n'+$('log').textContent;}
+async function checkHealth(){const r=await fetch(API+'/health');say('health: '+await r.text());}
+async function createCase(){const b={text:$('caseText').value,title:$('caseTitle').value||null};
+const r=await fetch(API+'/cases',{method:'POST',headers:hdr(),body:JSON.stringify(b)});const j=await r.json();
+lastCase=j.case_id;$('caseId').value=j.case_id||'';if(j.task_id){lastTask=j.task_id;$('taskId').value=j.task_id;}
+say('create-case '+r.status);await refreshCase();}
+async function createTask(){const r=await fetch(API+'/cases/'+$('caseId').value+'/tasks',{method:'POST',headers:hdr(),body:JSON.stringify({task_type:$('taskType').value,instructions:$('taskInstr').value||$('caseText').value,approval_required:$('appr').value})});const j=await r.json();lastTask=j.id;$('taskId').value=j.id||'';say('task '+r.status+' '+j.status);await refreshTask();}
+async function addMessage(){if(!$('caseId').value)return say('no case');const r=await fetch(API+'/cases/'+$('caseId').value+'/messages',{method:'POST',headers:hdr(),body:JSON.stringify({text:$('followText').value})});const j=await r.json();if(j.task_id){$('taskId').value=j.task_id;lastTask=j.task_id;}say('follow-up '+r.status+' '+(j.status||j.intent)+(j.resumed&&j.resumed.length?' resumed='+j.resumed.length:''));$('followText').value='';await refreshCase();if(j.task_id)await refreshTask();}
+async function refreshCase(){if(!$('caseId').value)return;const r=await fetch(API+'/cases/'+$('caseId').value,{headers:{'X-API-Key':$('apiKey').value}});const j=await r.json();$('caseOut').textContent=JSON.stringify(j,null,2);
+const f=Object.keys(j.fields||{});$('statusLine').innerHTML='<span class="badge">case '+j.case.id.slice(0,8)+'</span>'+f.map(k=>'<span class="badge">'+k+' v'+j.fields[k].version+'</span>').join('')+(j.tasks||[]).map(t=>'<span class="badge">'+t.task_type+': '+t.status+'</span>').join('');}
+async function refreshTask(){if(!$('taskId').value)return;const r=await fetch(API+'/tasks/'+$('taskId').value,{headers:{'X-API-Key':$('apiKey').value}});const t=await r.text();$('caseOut').textContent=t;try{const j=JSON.parse(t);$('statusLine').innerHTML='<span class="badge">'+j.status+'</span> <span class="badge">plan: '+j.plan_proposed_by+(j.plan_fallback?' (fallback)':'')+'</span>';}catch(e){}say('task refresh '+r.status);}
+async function decide(ok){const r=await fetch(API+'/tasks/'+$('taskId').value+'/approvals',{method:'POST',headers:hdr(),body:JSON.stringify({decision:ok?'approved':'rejected',reason:$('apprReason').value||null})});say('approval '+r.status+' '+await r.text());await refreshTask();}
+async function uploadDoc(){const f=$('kbFile').files[0];if(!f)return say('no file');const fd=new FormData();fd.append('file',f);
+const r=await fetch(API+'/knowledge/documents?'+new URLSearchParams(),{method:'POST',headers:{'X-API-Key':$('apiKey').value},body:fd});const j=await r.json();$('verId').value=j.version_id||'';say('upload '+r.status+' chunks='+(j.chunks||'?'));}
+async function publishVer(){const r=await fetch(API+'/knowledge/versions/'+$('verId').value+'/publish',{method:'POST',headers:hdr(),body:'{}'});say('publish '+r.status+' '+await r.text());}
+async function runWorkerOnce(){say('worker runs server-side (see /health oldest_queued_job_age_s). Poll task status with Refresh task.');await refreshTask();}
+function resetAll(){$('caseId').value='';$('taskId').value='';$('caseOut').textContent='{}';say('reset');}
+</script>
+</body>
+</html>

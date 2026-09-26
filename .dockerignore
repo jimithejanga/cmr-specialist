@@ -1,0 +1,16 @@
+.venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.git
+.gitignore
+.env
+*.db
+*.sqlite3
+.DS_Store
+tests
+output
+*.md
+*.pdf
+*.ipynb
+tmp

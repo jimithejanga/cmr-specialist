@@ -1,0 +1,15 @@
+fastapi>=0.100.0
+uvicorn[standard]>=0.22.0
+pydantic>=2.0.0
+sqlalchemy>=2.0.0
+psycopg[binary]>=3.1.0
+pypdf>=3.9.0
+requests>=2.28.0
+pyyaml>=6.0
+python-multipart>=0.0.12
+# Optional / heavy: install only when needed
+# sentence-transformers>=2.2.2
+# torch>=2.0.0
+# transformers>=4.30.0
+# peft>=0.4.0
+# bitsandbytes>=0.41.0

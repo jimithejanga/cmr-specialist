@@ -1,0 +1,60 @@
+# Lean production shape (spec 07): web + worker + managed Postgres.
+# Local default uses SQLite (DATABASE_URL) so the stack runs with zero ops.
+# For staging/prod: set DATABASE_URL=postgresql+psycopg://user:pass@db:5432/cmr
+# and uncomment the db service below.
+
+services:
+  web:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - HARNESS_HOST=0.0.0.0
+      - HARNESS_PORT=8080
+      - DATABASE_URL=${DATABASE_URL:-sqlite:////app/data/cmr_cases.db}
+      - HARNESS_DATA_DIR=/app/data
+      - INFERENCE_PROVIDER=${INFERENCE_PROVIDER:-mock}
+      - INFERENCE_HTTP_URL=${INFERENCE_HTTP_URL:-http://host.docker.internal:8000/v1/chat/completions}
+      - HARNESS_API_KEY=${HARNESS_API_KEY:-cmr-secret-key-2026}
+      - TOOL_MODULE_TOKEN=${TOOL_MODULE_TOKEN:-cmr-tool-token-dev}
+    volumes:
+      - harness_data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: ["python", "-m", "harness.worker.worker"]
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-sqlite:////app/data/cmr_cases.db}
+      - HARNESS_DATA_DIR=/app/data
+      - INFERENCE_PROVIDER=${INFERENCE_PROVIDER:-mock}
+      - TOOL_MODULE_TOKEN=${TOOL_MODULE_TOKEN:-cmr-tool-token-dev}
+      - WORKER_POLL_INTERVAL_S=${WORKER_POLL_INTERVAL_S:-2.0}
+    volumes:
+      - harness_data:/app/data
+    depends_on:
+      - web
+
+  # Uncomment for managed-Postgres-like local staging:
+  # db:
+  #   image: postgres:16-alpine
+  #   environment:
+  #     - POSTGRES_USER=cmr
+  #     - POSTGRES_PASSWORD=cmr-secret
+  #     - POSTGRES_DB=cmr
+  #   volumes:
+  #     - pg_data:/var/lib/postgresql/data
+  #   ports:
+  #     - "5432:5432"
+
+volumes:
+  harness_data:
+  # pg_data:
