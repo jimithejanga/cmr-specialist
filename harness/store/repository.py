@@ -278,3 +278,34 @@ def request_approval(db: Session, *, task_id: str, requested_action: str, reques
     db.commit()
     db.refresh(ap)
     return ap
+
+
+def purge_cases_older_than(db: Session, *, days: int) -> int:
+    """Shed retention: delete cases (and their dependents) older than `days`.
+
+    Append-only safety tables (tool_audit) keep their rows but lose the
+    case link; everything else under the case is removed. Returns cases removed.
+    """
+    from sqlalchemy import delete
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    old_ids = db.scalars(select(M.Case.id).where(M.Case.created_at < cutoff)).all()
+    if not old_ids:
+        return 0
+    task_ids = db.scalars(select(M.Task.id).where(M.Task.case_id.in_(old_ids))).all()
+    if task_ids:
+        for model, col in ((M.RunStep, M.RunStep.task_id),
+                           (M.Approval, M.Approval.task_id),
+                           (M.Citation, M.Citation.task_id),
+                           (M.AgentRun, M.AgentRun.task_id)):
+            db.execute(delete(model).where(col.in_(task_ids)))
+        db.execute(delete(M.Task).where(M.Task.id.in_(task_ids)))
+    db.execute(delete(M.AgentRun).where(M.AgentRun.case_id.in_(old_ids)))
+    db.execute(delete(M.CaseEvent).where(M.CaseEvent.case_id.in_(old_ids)))
+    db.execute(delete(M.ExtractedField).where(M.ExtractedField.case_id.in_(old_ids)))
+    db.execute(delete(M.CaseInput).where(M.CaseInput.case_id.in_(old_ids)))
+    db.execute(M.ToolAudit.__table__.update().where(
+        M.ToolAudit.case_id.in_(old_ids)).values(case_id=None))
+    db.execute(delete(M.Case).where(M.Case.id.in_(old_ids)))
+    db.commit()
+    return len(old_ids)
