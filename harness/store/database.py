@@ -45,3 +45,9 @@ def init_db() -> None:
     from harness.store import models  # noqa: F401  (register tables)
 
     Base.metadata.create_all(bind=engine)
+    try:
+        from harness.api import auth as _auth
+
+        _auth.ensure_schema(engine)
+    except Exception:
+        pass

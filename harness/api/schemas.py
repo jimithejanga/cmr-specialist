@@ -45,6 +45,7 @@ class CreateUserRequest(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=8, max_length=256)
     display_name: str | None = Field(default=None, max_length=128)
+    is_admin: bool = False
 
 
 class HealthResponse(BaseModel):

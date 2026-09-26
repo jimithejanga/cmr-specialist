@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CMR Admin · Worker</title>
+<link rel="stylesheet" href="/admin/shared.css"></head>
+<body>
+<header>
+<div><h1>CMR Admin <small>worker monitor · READ ONLY</small></h1></div>
+<nav><a href="/admin" data-p="index">Home</a><a href="/admin/mockdb.html" data-p="mockdb">MockDB</a><a href="/admin/harness.html" data-p="harness">Harness</a><a href="/admin/worker.html" data-p="worker">Worker</a><a href="/admin/knowledge.html" data-p="knowledge">Knowledge</a></nav>
+</header>
+<main>
+<div class="card"><h2>Queue</h2>
+<div class="row"><button onclick="load()">Refresh</button><button class="ghost" onclick="toggle()">Auto-refresh: <span id="as">off</span></button></div>
+<div id="q"></div>
+</div>
+<div class="card"><h2>Recent tasks</h2><div id="recent"></div></div>
+</main>
+<script src="/admin/shared.js"></script>
+<script>
+AdminNav('worker');
+let timer = null;
+function toggle() {
+  if (timer) { clearInterval(timer); timer = null; document.getElementById('as').textContent = 'off'; }
+  else { timer = setInterval(load, 5000); document.getElementById('as').textContent = 'on (5s)'; }
+}
+async function load() {
+  const r = await fetch('/admin/queue', {headers: hdr()});
+  if (r.status === 401 || r.status === 403) { document.getElementById('q').innerHTML = '<span class="badge bad">admin login required (Home page)</span>'; return; }
+  const j = await r.json();
+  const hb = j.worker_heartbeat === 'unknown' ? '<span class="badge bad">heartbeat: unknown</span>' : '<span class="badge ok">heartbeat: ' + esc(j.worker_heartbeat) + '</span>';
+  const age = j.oldest_queued_age_s == null ? '<span class="badge ok">queue empty</span>' : '<span class="badge warn">oldest queued: ' + j.oldest_queued_age_s + 's</span>';
+  const dist = Object.keys(j.by_status).map(k => '<span class="badge">' + esc(k) + ': ' + j.by_status[k] + '</span>').join('');
+  document.getElementById('q').innerHTML = hb + ' ' + age + '<div style="margin-top:6px">' + dist + '</div>';
+  let h = '<table><tr><th>task</th><th>type</th><th>status</th><th>attempts</th></tr>';
+  for (const t of j.recent) h += '<tr><td><code>' + esc(t.id) + '</code></td><td>' + esc(t.type) + '</td><td>' + esc(t.status) + '</td><td>' + t.attempts + '</td></tr>';
+  document.getElementById('recent').innerHTML = h + '</table>';
+}
+load();
+</script>
+</body></html>

@@ -43,14 +43,16 @@ def verify_password(cleartext: str, stored: str) -> bool:
 
 
 def create_user(db: Session, *, username: str, password: str,
-                display_name: str | None = None) -> M.User:
+                display_name: str | None = None, make_admin: bool = False) -> M.User:
     if len(password) < 8:
         raise ValueError("password must be at least 8 characters")
     existing = db.scalar(select(M.User).where(M.User.username == username))
     if existing:
         raise ValueError("username already exists")
+    first = db.scalar(select(M.User)) is None
     user = M.User(username=username, display_name=display_name or username,
-                  password_hash=hash_password(password))
+                  password_hash=hash_password(password),
+                  is_admin=1 if (first or make_admin) else 0)
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -111,3 +113,43 @@ def resolve_actor(db: Session, *, authorization: Optional[str],
         if hmac.compare_digest(x_api_key, settings.HARNESS_API_KEY):
             return "api-key"
     return None
+
+
+def require_admin(db: Session, *, authorization: Optional[str],
+                  x_api_key: Optional[str]) -> M.User:
+    """Admin gate for the observability site. Raises 401/403."""
+    from fastapi import HTTPException
+
+    actor = resolve_actor(db, authorization=authorization, x_api_key=x_api_key)
+    if not actor:
+        raise HTTPException(status_code=401, detail="login required")
+    if actor == "api-key":
+        raise HTTPException(status_code=403, detail="admin login required")
+    user = db.scalar(select(M.User).where(M.User.username == actor))
+    if not user or not user.active or not getattr(user, "is_admin", 0):
+        raise HTTPException(status_code=403, detail="admin required")
+    return user
+
+
+def ensure_schema(engine) -> None:
+    """Tolerant migration for pre-admin databases: add users.is_admin if absent."""
+    from sqlalchemy import inspect, text
+
+    try:
+        cols = [c["name"] for c in inspect(engine).get_columns("users")]
+    except Exception:
+        return
+    if "is_admin" not in cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0"))
+        # first user owns the site: promote when nobody is admin yet
+        from harness.store.database import SessionLocal as _SL
+        db = _SL()
+        try:
+            if db.scalar(select(M.User).where(M.User.is_admin == 1)) is None:
+                first = db.scalars(select(M.User).order_by(M.User.created_at)).first()
+                if first:
+                    first.is_admin = 1
+                    db.commit()
+        finally:
+            db.close()
