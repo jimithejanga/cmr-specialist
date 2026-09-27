@@ -3,10 +3,7 @@
 <title>CMR Admin · Worker</title>
 <link rel="stylesheet" href="/admin/shared.css"></head>
 <body>
-<header>
-<div><h1>CMR Admin <small>worker monitor · READ ONLY</small></h1></div>
-<nav><a href="/admin" data-p="index">Home</a><a href="/admin/mockdb.html" data-p="mockdb">MockDB</a><a href="/admin/harness.html" data-p="harness">Harness</a><a href="/admin/worker.html" data-p="worker">Worker</a><a href="/admin/knowledge.html" data-p="knowledge">Knowledge</a></nav>
-</header>
+<div id="shell"></div>
 <main>
 <div class="card"><h2>Queue</h2>
 <div class="row"><button onclick="load()">Refresh</button><button class="ghost" onclick="toggle()">Auto-refresh: <span id="as">off</span></button></div>
@@ -16,7 +13,7 @@
 </main>
 <script src="/admin/shared.js"></script>
 <script>
-AdminNav('worker');
+AdminShell('worker', 'worker monitor · READ ONLY');
 let timer = null;
 function toggle() {
   if (timer) { clearInterval(timer); timer = null; document.getElementById('as').textContent = 'off'; }

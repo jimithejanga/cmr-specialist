@@ -5,6 +5,7 @@ call formulations, and the sole executor against the (mock) database.
 The harness is SELECTOR-and-FILLER: reasons, picks a formulation, fills it.
 Output: output/CMR_Specialist_Tool_Module_Architecture.pdf
 """
+from pathlib import Path
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib.styles import ParagraphStyle
@@ -14,7 +15,8 @@ from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
                                 TableStyle, HRFlowable)
 
 W, H = A4
-OUT = "/Users/mac/Desktop/cmr_specialist/output/CMR_Specialist_Tool_Module_Architecture.pdf"
+ROOT = Path(__file__).resolve().parent.parent.parent
+OUT = str(ROOT / "docs" / "output" / "CMR_Specialist_Tool_Module_Architecture.pdf")
 
 TEAL = HexColor("#0F766E")
 TEAL_DARK = HexColor("#134E4A")

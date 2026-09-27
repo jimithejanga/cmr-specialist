@@ -3,6 +3,7 @@ CMR Specialist — Implementation & Hosting Manual PDF generator.
 Covers: what was built, how it works, local run, testing, hosting, operations.
 Output: output/CMR_Specialist_Implementation_Manual.pdf
 """
+from pathlib import Path
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib.styles import ParagraphStyle
@@ -12,7 +13,8 @@ from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
                                 TableStyle, PageBreak, HRFlowable, KeepTogether)
 
 W, H = A4
-OUT = "/Users/mac/Desktop/cmr_specialist/output/CMR_Specialist_Implementation_Manual.pdf"
+ROOT = Path(__file__).resolve().parent.parent.parent
+OUT = str(ROOT / "docs" / "output" / "CMR_Specialist_Implementation_Manual.pdf")
 
 TEAL = HexColor("#0F766E")
 TEAL_DARK = HexColor("#134E4A")
