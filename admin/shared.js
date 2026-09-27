@@ -33,4 +33,17 @@ async function whoami() {
 function AdminNav(page) {
   document.querySelectorAll('nav a').forEach(x => { if (x.dataset.p === page) x.classList.add('on'); });
 }
+/* One universal remote: every admin page calls AdminShell(page, subtitle)
+   instead of carrying its own header/nav copy. */
+function AdminShell(page, subtitle) {
+  const shell = document.getElementById('shell');
+  if (shell) shell.innerHTML =
+    '<header><div><h1>CMR Admin <small>' + subtitle + '</small></h1></div>' +
+    '<nav><a href="/admin" data-p="index">Home</a>' +
+    '<a href="/admin/mockdb.html" data-p="mockdb">MockDB</a>' +
+    '<a href="/admin/harness.html" data-p="harness">Harness</a>' +
+    '<a href="/admin/worker.html" data-p="worker">Worker</a>' +
+    '<a href="/admin/knowledge.html" data-p="knowledge">Knowledge</a></nav></header>';
+  AdminNav(page);
+}
 function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }

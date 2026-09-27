@@ -3,10 +3,7 @@
 <title>CMR Admin · Knowledge</title>
 <link rel="stylesheet" href="/admin/shared.css"></head>
 <body>
-<header>
-<div><h1>CMR Admin <small>bulk knowledge upload · upload then publish</small></h1></div>
-<nav><a href="/admin" data-p="index">Home</a><a href="/admin/mockdb.html" data-p="mockdb">MockDB</a><a href="/admin/harness.html" data-p="harness">Harness</a><a href="/admin/worker.html" data-p="worker">Worker</a><a href="/admin/knowledge.html" data-p="knowledge">Knowledge</a></nav>
-</header>
+<div id="shell"></div>
 <main>
 <div class="card"><h2>Bulk upload</h2>
 <p class="mut">Select many PDFs/docs at once. Uploading stages them; each version must still be published before it can ground answers.</p>
@@ -18,7 +15,7 @@
 </main>
 <script src="/admin/shared.js"></script>
 <script>
-AdminNav('knowledge');
+AdminShell('knowledge', 'bulk knowledge upload · upload then publish');
 let staged = [];
 async function upload() {
   const fs = document.getElementById('files').files;

@@ -3,10 +3,7 @@
 <title>CMR Admin · Console</title>
 <link rel="stylesheet" href="/admin/shared.css"></head>
 <body>
-<header>
-<div><h1>CMR Admin <small>observability · separate from operator console</small></h1></div>
-<nav><a href="/admin" data-p="index">Home</a><a href="/admin/mockdb.html" data-p="mockdb">MockDB</a><a href="/admin/harness.html" data-p="harness">Harness</a><a href="/admin/worker.html" data-p="worker">Worker</a><a href="/admin/knowledge.html" data-p="knowledge">Knowledge</a></nav>
-</header>
+<div id="shell"></div>
 <main>
 <div class="card"><h2>Session</h2>
 <div class="row"><input id="u" placeholder="username" autocomplete="username"><input id="p" type="password" placeholder="password" autocomplete="current-password"></div>
@@ -21,5 +18,5 @@
 </div>
 </main>
 <script src="/admin/shared.js"></script>
-<script>AdminNav('index');whoami();</script>
+<script>AdminShell('index', 'observability · separate from operator console');whoami();</script>
 </body></html>

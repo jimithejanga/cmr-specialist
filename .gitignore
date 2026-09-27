@@ -9,6 +9,7 @@ venv/
 
 # Secrets & local state
 .env
+var/
 *.db
 *.sqlite3
 

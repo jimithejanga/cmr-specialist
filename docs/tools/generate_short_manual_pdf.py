@@ -2,6 +2,7 @@
 CMR Specialist - Short Manual PDF (design specs, architecture, capabilities, UI guide).
 Output: output/CMR_Specialist_Short_Manual.pdf
 """
+from pathlib import Path
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib.styles import ParagraphStyle
@@ -11,7 +12,8 @@ from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
                                 TableStyle, HRFlowable)
 
 W, H = A4
-OUT = "/Users/mac/Desktop/cmr_specialist/output/CMR_Specialist_Short_Manual.pdf"
+ROOT = Path(__file__).resolve().parent.parent.parent
+OUT = str(ROOT / "docs" / "output" / "CMR_Specialist_Short_Manual.pdf")
 
 TEAL = HexColor("#0F766E")
 INK = HexColor("#1E293B")

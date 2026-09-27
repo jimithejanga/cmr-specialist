@@ -198,7 +198,7 @@ def reset_mock(**faults) -> None:
 def overlay_path() -> str:
     import os
 
-    return os.getenv("MOCKDB_OVERLAY", "data/mockdb_overlay.json")
+    return os.getenv("MOCKDB_OVERLAY", "var/mockdb_overlay.json")
 
 
 def _apply_overlay(db: MockDB) -> None:

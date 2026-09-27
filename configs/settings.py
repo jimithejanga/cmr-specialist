@@ -14,10 +14,11 @@ class Settings(BaseModel):
     VECTOR_INDEX_DIR: Path = Field(default_factory=lambda: Path(os.getenv("HARNESS_VECTOR_DIR", Path(__file__).resolve().parent.parent / "data" / "vector_index")))
 
     # Database — PostgreSQL is the system of record; SQLite is the local fallback.
-    # Set DATABASE_URL=postgresql+psycopg://user:pass@host:5432/cmr to use managed Postgres.
+    # Live state lives in var/ (never committed). Set DATABASE_URL explicitly
+    # to override, e.g. DATABASE_URL=postgresql+psycopg://user:pass@host:5432/cmr
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL",
-        f"sqlite:///{os.getenv('HARNESS_DB_PATH', str(Path(__file__).resolve().parent.parent / 'data' / 'cmr_cases.db'))}",
+        f"sqlite:///{os.getenv('HARNESS_DB_PATH', str(Path(__file__).resolve().parent.parent / 'var' / 'cmr_cases.db'))}",
     )
 
     # Embedding Model Settings
