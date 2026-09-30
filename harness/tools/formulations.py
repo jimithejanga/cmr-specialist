@@ -171,3 +171,99 @@ def viable_family_plan(family: str, fields: dict) -> list[str]:
         viable.append(fid)
         provided |= set(form.returns or ())
     return viable
+
+
+# Human questions for unresolvable WRITE inputs (used when a family plan
+# loses all its WRITEs: the task must ask, not silently complete read-only).
+WRITE_INPUT_PROMPTS = {
+    "phone": "buyer phone number",
+    "email": "buyer email address",
+    "nin": "buyer NIN",
+    "account": "payment account",
+    "rrr": "12-digit Remita RRR",
+    "plate": "vehicle plate number",
+    "request_ref": "payment request reference",
+    "state": "certificate state",
+}
+
+
+def blocking_inputs(family: str, fields: dict) -> list[str]:
+    """Field-level inputs blocking the family's WRITEs, in plan order.
+
+    Used when viability pruning would silently drop every WRITE: instead of
+    completing read-only, the task waits and asks for exactly these. The
+    walk follows the chain backward (WRITE needs buyer_profile_id <- the
+    buyer search needs a phone), so the user is asked for real facts, never
+    internal wiring names. Returns [] when at least one WRITE is executable.
+    """
+    viable = viable_family_plan(family, fields)
+    template = FAMILY_PLANS.get(family, [])
+    writes = [f for f in template
+              if CATALOG.get(f) is not None and CATALOG[f].verb == "WRITE"]
+    if not writes or any(f in viable for f in writes):
+        return []
+    provided: set[str] = set()
+    for fname, arg in FIELD_ARG_NAMES.items():
+        if (fields or {}).get(fname):
+            provided.add(arg)
+    provided |= set(ALWAYS_PROVIDED)
+    for fid in template:
+        if fid in viable:
+            form = CATALOG.get(fid)
+            if form:
+                provided |= set(form.returns or ())
+    wanted: list[str] = []
+    # Ask only for facts a user can supply in a follow-up; chain-only names
+    # (request_ref, internal ids) are the system's problem, not the user's.
+    suppliable = set(FIELD_ARG_NAMES.values())
+
+    def provides(n: str) -> bool:
+        for fid in template:
+            form = CATALOG.get(fid)
+            if form is None:
+                continue
+            returns = set(form.returns or ())
+            if n in returns or SATISFIED_BY.get(n) in returns:
+                return True
+        return False
+
+    def need(name: str, depth: int = 0) -> None:
+        if _resolves(name, provided) or depth > 3:
+            return
+        progressed = False
+        for fid in template:
+            form = CATALOG.get(fid)
+            if form is None:
+                continue
+            returns = set(form.returns or ())
+            alias = SATISFIED_BY.get(name)
+            if name in returns or (alias and alias in returns):
+                progressed = True
+                for n in (form.inputs or {}):
+                    if not _resolves(n, provided):
+                        if provides(n):
+                            need(n, depth + 1)
+                        elif n in suppliable and n not in wanted:
+                            wanted.append(n)
+        if not progressed and name in suppliable and name not in wanted:
+            wanted.append(name)
+
+    for fid in template:
+        form = CATALOG.get(fid)
+        if form is None or form.verb != "WRITE":
+            continue
+        for n, s in (form.inputs or {}).items():
+            if s.get("required"):
+                need(n)
+                # Root facts are asked directly even when a (blocked) provider
+                # exists downstream - e.g. the RRR itself, not just the account.
+                if (not _resolves(n, provided) and n in suppliable
+                        and n not in wanted):
+                    wanted.append(n)
+    return wanted
+
+
+
+def prompt_for_input(name: str) -> str:
+    label = WRITE_INPUT_PROMPTS.get(name, name.replace("_", " "))
+    return f"Please provide the {label} so the write step can run."

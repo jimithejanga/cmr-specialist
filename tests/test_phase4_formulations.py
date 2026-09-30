@@ -118,3 +118,29 @@ def test_viability_prunes_unresolvable():
         "change_of_ownership",
         {"plate_number": "P", "buyer_name": "B", "seller_name": "S",
          "phone": "0801"}) == F.FAMILY_PLANS["change_of_ownership"]
+
+
+def test_pruned_writes_wait_with_prompts():
+    from harness.tools import formulations as F
+
+    assert F.blocking_inputs("change_of_ownership",
+                             {"plate_number": "P", "buyer_name": "B",
+                              "seller_name": "S"}) == ["phone", "email", "nin", "tin"]
+    assert F.blocking_inputs("payment_issue", {"remita_rrr": "R"}) == ["account"]
+    db = SessionLocal()
+    try:
+        case = R.create_case_shell(db, title="p4 blocked")
+        _fields(db, case.id, [("plate_number", "P4X"), ("buyer_name", "B"),
+                              ("seller_name", "S")])
+        task = R.create_task(db, case_id=case.id, task_type="change_of_ownership",
+                             instructions="blocked transfer")
+        db.commit()
+        out = svc.execute_task(db, task, worker_id="test")
+        assert out["status"] == "waiting_for_input", out
+        assert "phone" in out["missing"]
+        assert "phone" in out["prompts"]
+        fresh = db.get(M.Task, task.id)
+        assert fresh.status == "waiting_for_input"
+        assert fresh.result_json is None
+    finally:
+        db.close()

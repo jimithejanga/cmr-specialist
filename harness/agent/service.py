@@ -302,6 +302,22 @@ def execute_task(db: Session, task: M.Task, *, worker_id: str = "worker") -> dic
     if task.task_type in planner_mod.FAMILY_ROUTE:
         plan = planner_mod.propose_plan(task.task_type, task.id, fields,
                                         needs_approval=(task.approval_required != "never"))
+        # Honest-write rule: a family whose WRITEs all pruned away must ASK
+        # for the blocking facts - never silently complete as read-only.
+        from harness.tools import formulations as _F
+        family = planner_mod.FAMILY_ROUTE[task.task_type]
+        blocked = _F.blocking_inputs(family, fields)
+        if blocked:
+            prompts = {b: _F.prompt_for_input(b) for b in blocked}
+            R.set_task_status(db, task, "waiting_for_input",
+                              waiting_reason=json.dumps({"missing": blocked,
+                                                         "prompts": prompts}))
+            R.add_step(db, run_id=run.id, task_id=task.id, sequence=0,
+                       action="await_write_inputs", tool="validate_fields",
+                       arguments={"missing": blocked},
+                       result={"valid": False}, status="ok")
+            return {"task_id": task.id, "status": "waiting_for_input",
+                    "missing": blocked, "prompts": prompts}
     elif stored and stored.get("steps"):
         from harness.agent.schemas import Plan as _Plan, PlanStep as _PlanStep
         plan = _Plan(task_type=stored.get("task_type", task.task_type),
