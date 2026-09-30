@@ -71,6 +71,15 @@ async def request_id_middleware(request: Request, call_next):
 
 
 def verify_api_key(provided: Optional[str]) -> None:
+    """Fail closed under STRICT_AUTH (missing/invalid rejected); permissive locally."""
+    from configs.settings import strict_auth
+
+    if strict_auth():
+        if not provided or not settings.HARNESS_API_KEY:
+            raise HTTPException(status_code=401, detail="authentication required")
+        if not hmac.compare_digest(provided, settings.HARNESS_API_KEY):
+            raise HTTPException(status_code=401, detail="Invalid API Key")
+        return
     if settings.HARNESS_API_KEY and provided:
         if not hmac.compare_digest(provided, settings.HARNESS_API_KEY):
             raise HTTPException(status_code=401, detail="Invalid API Key")
@@ -304,6 +313,15 @@ def decide_approval(task_id: str, req: S.ApprovalRequest,
                     db: Session = Depends(get_db)):
     verify_api_key(x_api_key)
     actor = auth_mod.resolve_actor(db, authorization=authorization, x_api_key=x_api_key)
+    from configs.settings import strict_auth as _strict
+
+    if _strict():
+        # Phase-1 rule: names only from sessions. No anonymous approvers,
+        # no machine keys, no body-supplied names.
+        user = auth_mod.session_user(db, authorization)
+        if not user:
+            raise HTTPException(status_code=401, detail="approver sign-in required")
+        actor = user.username
     task = db.get(M.Task, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="task not found")
@@ -315,7 +333,7 @@ def decide_approval(task_id: str, req: S.ApprovalRequest,
         ap = R.request_approval(db, task_id=task_id, requested_action="manual approval",
                                 requester="api")
     ap.decision = req.decision
-    ap.approver = actor or req.approver
+    ap.approver = actor if _strict() else (actor or req.approver)
     ap.reason = req.reason
     ap.decided_at = datetime.now(timezone.utc)
     if req.decision == "approved":
@@ -502,4 +520,14 @@ def legacy_query(req: S.QueryRequest, x_api_key: Optional[str] = Header(default=
 
 
 if __name__ == "__main__":
+    from configs.settings import assert_pilot_secrets
+
+    assert_pilot_secrets()
     uvicorn.run(app, host=settings.HOST, port=settings.PORT)
+
+
+@app.on_event("startup")
+def _pilot_secret_gate() -> None:
+    from configs.settings import assert_pilot_secrets
+
+    assert_pilot_secrets()

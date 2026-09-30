@@ -102,6 +102,13 @@ def user_from_token(db: Session, token: str) -> M.User | None:
     return user
 
 
+def session_user(db: Session, authorization: Optional[str]) -> M.User | None:
+    """The logged-in human, if any. Machine API keys are NOT session users."""
+    if authorization and authorization.lower().startswith("bearer "):
+        return user_from_token(db, authorization[7:].strip())
+    return None
+
+
 def resolve_actor(db: Session, *, authorization: Optional[str],
                   x_api_key: Optional[str]) -> str | None:
     """Who is calling? Session user preferred, legacy API key as machine actor."""

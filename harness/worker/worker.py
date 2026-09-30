@@ -58,4 +58,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    from configs.settings import assert_pilot_secrets
+
+    assert_pilot_secrets()
     main()
