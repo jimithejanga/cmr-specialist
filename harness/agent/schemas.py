@@ -38,6 +38,9 @@ class PlanStep(BaseModel):
     tool: str
     arguments: dict[str, Any] = Field(default_factory=dict)
     requires_approval: bool = False
+    # Phase-2 rule: every step is required unless explicitly optional.
+    # A failed required step fails the task; optional steps degrade.
+    optional: bool = False
     idempotency_key: str
 
 

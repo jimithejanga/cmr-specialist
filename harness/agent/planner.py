@@ -23,6 +23,7 @@ def build_plan(task_type: str, task_id: str, fields: dict, needs_approval: bool 
         key = hashlib.sha256(f"{task_id}|{i}|{tool}".encode()).hexdigest()[:12]
         steps.append(PlanStep(
             sequence=i, action=f"{tool} (step {i + 1}/{len(tools)})", tool=tool,
+            optional=(tool == "knowledge_lookup"),
             arguments={"task_type": task_type, "fields": fields},
             requires_approval=bool(needs_approval and tool in {"payment_status_check"}),
             idempotency_key=f"{task_id}-s{i}-{key}",
@@ -71,6 +72,7 @@ def propose_plan(task_type: str, task_id: str, fields: dict,
         key = hashlib.sha256(f"{task_id}|{i}|{tool}".encode()).hexdigest()[:12]
         steps.append(PlanStep(
             sequence=i, action=f"{tool} (step {i + 1}/{len(tools)})", tool=tool,
+            optional=(tool == "knowledge_lookup"),
             arguments={"task_type": task_type, "fields": fields},
             requires_approval=bool(
                 (needs_approval and tool in {"payment_status_check"})
@@ -86,6 +88,7 @@ def build_knowledge_plan(query_id: str) -> Plan:
     for i, tool in enumerate(KNOWLEDGE_FLOW):
         key = hashlib.sha256(f"{query_id}|{i}|{tool}".encode()).hexdigest()[:12]
         steps.append(PlanStep(sequence=i, action=f"{tool}", tool=tool,
+                               optional=(tool == "knowledge_lookup"),
                               arguments={}, requires_approval=False,
                               idempotency_key=f"{query_id}-k{i}-{key}"))
     return Plan(task_type="knowledge_query", steps=steps)
@@ -104,6 +107,7 @@ def build_family_plan(family: str, task_id: str, fields: dict) -> Plan:
         form = F.CATALOG[tool]
         steps.append(PlanStep(
             sequence=i, action=f"{tool} (step {i + 1}/{len(tools)})", tool=tool,
+            optional=(tool == "knowledge_lookup"),
             arguments={"fields": fields},
             requires_approval=form.verb == "WRITE",
             idempotency_key=f"{task_id}-s{i}-{key}",

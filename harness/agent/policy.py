@@ -1,6 +1,13 @@
-"""Policy gate: role, approval class, sensitivity, step count, timeout, allowed tool."""
+"""Policy gate: role, approval class, sensitivity, step count, timeout, allowed tool.
+
+Phase-2 rule: approval mirrors the exact act. plan_hash binds an approval to
+the precise plan (tool order + arguments) it was requested for; a changed
+plan needs a fresh approval, and only a matching approval unlocks.
+"""
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 
 from configs.settings import settings
@@ -43,3 +50,16 @@ def check(plan: Plan, *, approval_required: str = "never") -> PolicyDecision:
     if any(s.requires_approval for s in plan.steps):
         return PolicyDecision(allowed=True, needs_approval=True, reason="planner flagged approval")
     return PolicyDecision(allowed=True, reason="policy passed")
+
+
+def plan_hash(plan: Plan) -> str:
+    """Canonical fingerprint of the exact act: tool order + full arguments.
+
+    Idempotency keys are included (they bind task + order); volatile
+    nothing is excluded. Any replan - reorder, re-argument, re-target -
+    yields a different hash and voids prior approvals.
+    """
+    canon = [{"tool": s.tool, "arguments": s.arguments,
+              "requires_approval": s.requires_approval,
+              "idempotency_key": s.idempotency_key} for s in plan.steps]
+    return hashlib.sha256(json.dumps(canon, sort_keys=True, default=str).encode()).hexdigest()[:16]

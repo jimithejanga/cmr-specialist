@@ -166,10 +166,12 @@ def queue_task(db: Session, *, case_id: str, task_type: str,
         "task_type": plan.task_type, "proposed_by": plan.proposed_by,
         "steps": [{"sequence": s.sequence, "action": s.action, "tool": s.tool,
                    "arguments": s.arguments, "requires_approval": s.requires_approval,
+                   "optional": s.optional,
                    "idempotency_key": s.idempotency_key} for s in plan.steps]})
     if plan.steps and any(s.requires_approval for s in plan.steps):
         R.request_approval(db, task_id=task.id,
-                           requested_action=f"execute {plan.proposed_by}-proposed plan")
+                           requested_action=f"execute {plan.proposed_by}-proposed plan",
+                           action_hash=policy_mod.plan_hash(plan))
     db.flush()
     return task
 
@@ -292,12 +294,15 @@ def execute_task(db: Session, task: M.Task, *, worker_id: str = "worker") -> dic
         plan = planner_mod.propose_plan(task.task_type, task.id, fields,
                                         needs_approval=(task.approval_required != "never"))
     effective_requirement = task.approval_required
+    current_hash = policy_mod.plan_hash(plan)
     if task.approval_required != "never":
         approved = db.scalar(select(M.Approval).where(
             M.Approval.task_id == task.id, M.Approval.decision == "approved")
             .order_by(M.Approval.decided_at.desc()))
-        if approved is not None:
-            # One human approval unlocks this task; do not loop on the gate.
+        # Phase-2 binding: only a matching approval unlocks, and only the
+        # exact act it was requested for. A replanned task re-gates.
+        if approved is not None and approved.action_hash == current_hash:
+            # One matching human approval unlocks this exact plan; no loop.
             effective_requirement = "never"
             for s in plan.steps:
                 s.requires_approval = False
@@ -312,7 +317,8 @@ def execute_task(db: Session, task: M.Task, *, worker_id: str = "worker") -> dic
         R.set_task_status(db, task, "failed", error_ref=decision.reason)
         return {"task_id": task.id, "status": "failed", "error": decision.reason}
     if decision.needs_approval:
-        R.request_approval(db, task_id=task.id, requested_action="execute sensitive plan")
+        R.request_approval(db, task_id=task.id, requested_action="execute sensitive plan",
+                           action_hash=current_hash)
         R.set_task_status(db, task, "waiting_approval",
                           waiting_reason=json.dumps({"reason": decision.reason}))
         return {"task_id": task.id, "status": "waiting_approval", "reason": decision.reason}
@@ -365,8 +371,13 @@ def execute_task(db: Session, task: M.Task, *, worker_id: str = "worker") -> dic
                    result=res.output, status="ok" if res.ok else "failed",
                    retry_count=max(res.attempts - 1, 0), idempotency_key=step.idempotency_key)
         results[step.tool] = res.output
-        if not res.ok and step.tool in {"payment_status_check"}:
-            pass  # record finding, continue to draft (read-only tool, no retry storm)
+        # Phase-2 rule: status mirrors reality. A failed REQUIRED step fails
+        # the task immediately with the step named - never drafted over.
+        # (Transient retry policy is Phase-3 work; terminal truth comes first.)
+        if not res.ok and not step.optional:
+            err = f"required step failed: {step.tool} ({res.error or 'see step result'})"
+            R.set_task_status(db, task, "failed", error_ref=err)
+            return {"task_id": task.id, "status": "failed", "error": err}
     summary = (results.get("draft_solution") or {}).get("summary") or f"{task.task_type} executed."
     final = {"summary": summary, "status": "completed", "steps": len(plan.steps),
              "run_id": run.id, "tool_results": results}

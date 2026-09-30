@@ -272,8 +272,10 @@ def add_citations(db: Session, *, run_id: str, task_id: str | None, hits: list[d
     db.commit()
 
 
-def request_approval(db: Session, *, task_id: str, requested_action: str, requester: str = "worker") -> M.Approval:
-    ap = M.Approval(task_id=task_id, requested_action=requested_action, requester=requester)
+def request_approval(db: Session, *, task_id: str, requested_action: str, requester: str = "worker",
+                     action_hash: str | None = None) -> M.Approval:
+    ap = M.Approval(task_id=task_id, requested_action=requested_action, requester=requester,
+                    action_hash=action_hash)
     db.add(ap)
     db.commit()
     db.refresh(ap)

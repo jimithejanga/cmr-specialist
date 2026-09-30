@@ -36,4 +36,10 @@ def validate_task_result(result: dict) -> ValidationResult:
         return ValidationResult(valid=False, reason="result missing summary")
     if result.get("status") not in {"completed", "waiting_for_input", "waiting_approval", "failed"}:
         return ValidationResult(valid=False, reason="unknown result status")
+    if result.get("status") == "completed":
+        # Phase-2 backstop: no completed stamp over failed tool results.
+        for name, out in (result.get("tool_results") or {}).items():
+            if isinstance(out, dict) and out.get("status") == "failed":
+                return ValidationResult(valid=False,
+                                        reason=f"completed over failed tool result: {name}")
     return ValidationResult(valid=True, reason="result schema ok")

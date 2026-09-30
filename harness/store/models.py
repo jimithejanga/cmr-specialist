@@ -176,6 +176,8 @@ class Approval(Base):
     requested_action: Mapped[str] = mapped_column(String(256))
     requester: Mapped[str | None] = mapped_column(String(128), nullable=True)
     approver: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Phase-2 binding: hash of the exact plan approved (tool order + args).
+    action_hash: Mapped[str | None] = mapped_column(String(32), nullable=True)
     decision: Mapped[str] = mapped_column(String(32), default="pending")  # pending|approved|rejected
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

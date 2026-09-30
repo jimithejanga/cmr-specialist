@@ -139,7 +139,12 @@ def require_admin(db: Session, *, authorization: Optional[str],
 
 
 def ensure_schema(engine) -> None:
-    """Tolerant migration for pre-admin databases: add users.is_admin if absent."""
+    """Tolerant migrations for pre-existing databases."""
+    _ensure_users_admin(engine)
+    _ensure_approvals_hash(engine)
+
+
+def _ensure_users_admin(engine) -> None:
     from sqlalchemy import inspect, text
 
     try:
@@ -160,3 +165,15 @@ def ensure_schema(engine) -> None:
                     db.commit()
         finally:
             db.close()
+
+
+def _ensure_approvals_hash(engine) -> None:
+    from sqlalchemy import inspect, text
+
+    try:
+        cols = [c["name"] for c in inspect(engine).get_columns("approvals")]
+    except Exception:
+        return
+    if "action_hash" not in cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE approvals ADD COLUMN action_hash VARCHAR(32)"))
