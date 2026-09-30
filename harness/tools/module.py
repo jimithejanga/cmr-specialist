@@ -161,6 +161,19 @@ def fire(*, formulation_id: str, arguments: dict | None = None,
             envelope["audit_id"] = _audit("refused: no evidence", envelope["error_ref"])
             return envelope
 
+    # ── stage 2b: durable idempotency (Phase-3 rule) ────────────────────
+    # Memory `_once` is a cache; this table is the truth. A key fired before
+    # a restart returns the stored outcome instead of re-firing.
+    if idempotency_key and audit_db is not None:
+        dup = _idem_lookup(audit_db, idempotency_key)
+        if dup is not None:
+            data = dict(dup)
+            data["duplicate"] = True
+            envelope["status"] = "ok"
+            envelope["data"] = data
+            envelope["audit_id"] = _audit("duplicate: served stored outcome", None)
+            return envelope
+
     # ── stage 3: fire (reads retry on transient; writes never retry) ─────
     attempts = 1 + (form.retries if form.verb == "CHECK" else 0)
     last_err: str | None = None
@@ -171,6 +184,8 @@ def fire(*, formulation_id: str, arguments: dict | None = None,
             envelope["data"] = data
             ref = f"{formulation_id}:{hashlib.sha256(json.dumps(data, default=str).encode()).hexdigest()[:8]}"
             envelope["evidence_ref"] = ref
+            if idempotency_key and audit_db is not None:
+                _idem_store(audit_db, idempotency_key, formulation_id, data)
             envelope["audit_id"] = _audit(json.dumps(data, default=str)[:2000], None)
             return envelope
         except TransientError as exc:
@@ -185,6 +200,34 @@ def fire(*, formulation_id: str, arguments: dict | None = None,
     envelope["error_ref"] = last_err or "terminal: unknown failure"
     envelope["audit_id"] = _audit("failed", envelope["error_ref"])
     return envelope
+
+
+def _idem_lookup(audit_db, key: str) -> dict | None:
+    """Stored outcome for a previously fired key, if any."""
+    from harness.store import models as M
+
+    row = audit_db.get(M.ToolIdempotency, key)
+    if not row:
+        return None
+    try:
+        return json.loads(row.result_json)
+    except Exception:
+        return None
+
+
+def _idem_store(audit_db, key: str, formulation_id: str, data: dict) -> None:
+    """Persist a fired outcome. Lost races re-read as duplicates."""
+    from sqlalchemy.exc import IntegrityError
+
+    from harness.store import models as M
+
+    try:
+        audit_db.add(M.ToolIdempotency(
+            idempotency_key=key, formulation_id=formulation_id,
+            result_json=json.dumps(data, default=str)[:4000]))
+        audit_db.commit()
+    except IntegrityError:
+        audit_db.rollback()
 
 
 def reset_mock(**faults) -> None:

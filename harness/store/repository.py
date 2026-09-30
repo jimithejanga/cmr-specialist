@@ -200,23 +200,44 @@ def create_task(
 
 
 def lease_pending_task(db: Session, *, worker_id: str, timeout_s: int = 600) -> M.Task | None:
-    """Lease one queued task, or reclaim an expired lease. Single-row, restart-safe."""
-    cutoff = _now() - timedelta(seconds=timeout_s)
-    task = db.scalar(select(M.Task).where(M.Task.status == "queued")
+    """Lease one queued task, or reclaim an expired lease. Atomic claim.
+
+    Phase-3 rule: a guarantee that dies on restart was never a guarantee.
+    The claim is a single conditional UPDATE (won iff rowcount == 1), so two
+    workers racing the same row produce exactly one winner - on SQLite and
+    Postgres alike. No SELECT-then-UPDATE window.
+    """
+    from sqlalchemy import update
+
+    now = _now()
+    cand = db.scalar(select(M.Task.id).where(M.Task.status == "queued")
                      .order_by(M.Task.created_at.asc()).limit(1))
-    if task is None:
-        task = db.scalar(select(M.Task).where(
-            M.Task.status.in_(["leased", "running"]), M.Task.leased_at < cutoff)
-            .order_by(M.Task.leased_at.asc()).limit(1))
-        if task is None:
-            return None
-    task.status = "leased"
-    task.leased_by = worker_id
-    task.leased_at = _now()
-    task.attempts = (task.attempts or 0) + 1
+    if cand is not None:
+        won = db.execute(update(M.Task).where(
+            M.Task.id == cand, M.Task.status == "queued").values(
+            status="leased", leased_by=worker_id, leased_at=now,
+            attempts=(M.Task.attempts + 1) if M.Task.attempts is not None else 1))
+        db.commit()
+        if won.rowcount == 1:
+            db.expire_all()
+            return db.get(M.Task, cand)
+        db.expire_all()  # lost the race; fall through to reclaim path
+    cutoff = now - timedelta(seconds=timeout_s)
+    cand = db.scalar(select(M.Task.id).where(
+        M.Task.status.in_(["leased", "running"]), M.Task.leased_at < cutoff)
+        .order_by(M.Task.leased_at.asc()).limit(1))
+    if cand is None:
+        return None
+    won = db.execute(update(M.Task).where(
+        M.Task.id == cand, M.Task.status.in_(["leased", "running"]),
+        M.Task.leased_at < cutoff).values(
+        status="leased", leased_by=worker_id, leased_at=now,
+        attempts=(M.Task.attempts + 1) if M.Task.attempts is not None else 1))
     db.commit()
-    db.refresh(task)
-    return task
+    if won.rowcount != 1:
+        return None  # another worker reclaimed it first
+    db.expire_all()
+    return db.get(M.Task, cand)
 
 
 def set_task_status(db: Session, task: M.Task, status: str, **extra: Any) -> M.Task:

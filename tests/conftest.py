@@ -14,7 +14,7 @@ def _clean_db():
     init_db()
     db = SessionLocal()
     try:
-        for table in ("tool_audit", "citations", "user_sessions", "users",
+        for table in ("tool_audit", "tool_idempotency", "citations", "user_sessions", "users",
                       "approvals", "run_steps", "agent_runs", "case_events",
                       "extracted_fields", "case_inputs", "tasks",
                       "knowledge_chunks", "knowledge_versions",

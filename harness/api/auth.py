@@ -177,3 +177,8 @@ def _ensure_approvals_hash(engine) -> None:
     if "action_hash" not in cols:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE approvals ADD COLUMN action_hash VARCHAR(32)"))
+    # Phase-3 table on pre-existing databases (fresh DBs get it via create_all).
+    try:
+        M.ToolIdempotency.__table__.create(bind=engine, checkfirst=True)
+    except Exception:
+        pass

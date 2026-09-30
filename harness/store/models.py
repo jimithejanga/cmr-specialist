@@ -215,6 +215,21 @@ class ToolAudit(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+class ToolIdempotency(Base):
+    """Phase-3 durability: write-once records survive process restarts.
+
+    The mock's in-memory `fired` dict is a cache; this table is the truth.
+    Unique key enforced by the database, so even a crash between external
+    execution and local bookkeeping cannot double-fire.
+    """
+
+    __tablename__ = "tool_idempotency"
+    idempotency_key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    formulation_id: Mapped[str] = mapped_column(String(64))
+    result_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class User(Base):
     """Shed locks: one row per staff member. Passwords are PBKDF2 hashes;
     the cleartext never touches the database."""
