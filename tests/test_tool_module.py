@@ -148,7 +148,9 @@ def test_family_plan_names_formulations():
     plan = planner_mod.build_family_plan(
         "payment_issue", "task-1",
         {"remita_rrr": "123456789012", "account_identifier": "acct-Y"})
-    assert [s.tool for s in plan.steps] == F.FAMILY_PLANS["payment_issue"]
+    # Phase-4 viability: vehicle lookup (no plate/chassis) and confirm
+    # (no request_ref) prune away; only resolvable steps remain.
+    assert [s.tool for s in plan.steps] == ["CHECK.receipt.lookup", "WRITE.payment.link"]
     assert all(s.tool in F.CATALOG for s in plan.steps)
 
 

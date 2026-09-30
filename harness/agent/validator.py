@@ -6,6 +6,7 @@ Software MUST enforce (spec 03 table):
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 
@@ -14,6 +15,32 @@ class ValidationResult:
     valid: bool
     reason: str = ""
     fallback: bool = False
+
+
+# Phase-4 evidence rule: high-risk tokens in the answer (figures, verdicts,
+# identifiers) must occur verbatim in the cited spans. A citation list that
+# does not contain the claim is decoration, not evidence.
+_VERDICT_WORDS = {"verified", "paid", "approved", "confirmed", "transferred",
+                  "renewed", "valid", "rejected", "suspended"}
+_TOKEN_RE = re.compile(r"\d[\d,]*(?:\.\d+)?|[A-Za-z]{4,}")
+
+_STOP = {"that", "this", "with", "from", "your", "have", "been", "will",
+         "step", "click", "visit", "select", "enter", "based", "procedures",
+         "following", "using", "question"}
+
+
+def _high_risk_tokens(answer: str) -> list[str]:
+    toks: list[str] = []
+    for m in _TOKEN_RE.findall(answer):
+        low = m.lower()
+        if m[0].isdigit():
+            if len(m) >= 4:  # figures, years, ID runs - never uncited
+                toks.append(low)
+        elif low in _VERDICT_WORDS:
+            toks.append(low)
+    # de-dupe, keep order
+    seen: set[str] = set()
+    return [t for t in toks if not (t in seen or seen.add(t))]
 
 
 def validate_knowledge_answer(answer: str, citations: list) -> ValidationResult:
@@ -28,6 +55,12 @@ def validate_knowledge_answer(answer: str, citations: list) -> ValidationResult:
         if claim in lowered:
             return ValidationResult(valid=False,
                                     reason=f"unverified external claim: '{claim}'", fallback=True)
+    spans = " ".join(getattr(c, "text", "") or "" for c in citations).lower()
+    for tok in _high_risk_tokens(answer):
+        if tok not in spans:
+            return ValidationResult(valid=False,
+                                    reason=f"unsupported token not in citations: '{tok}'",
+                                    fallback=True)
     return ValidationResult(valid=True, reason="cited answer")
 
 

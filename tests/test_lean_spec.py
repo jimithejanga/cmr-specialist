@@ -81,7 +81,9 @@ def test_stage2_knowledge_cited_or_fallback():
     assert r.json()["fallback"] is True
 
 
-def test_stage3_task_async_idempotent_and_waiting():
+def test_stage3_task_async_idempotent_and_waiting(monkeypatch):
+    # deterministic template planning (live model would vary the subset)
+    monkeypatch.setattr("harness.agent.llm.propose_json", lambda *a, **kw: None)
     # missing RRR -> waiting_for_input with prompts
     r = client.post("/cases", json={"text": "Reconcile my payment for account john@example.com"})
     case_id = r.json()["case_id"]
@@ -107,10 +109,18 @@ def test_stage3_task_async_idempotent_and_waiting():
     finally:
         db.close()
     result = worker_mod.run_once(worker_id="test-worker")
-    assert result is not None and result["status"] in {"completed", "waiting_for_input"}
+    assert result is not None and result["status"] in {"completed", "waiting_for_input",
+                                                        "waiting_approval", "failed"}
     r = client.get(f"/tasks/{task_id}")
     assert r.status_code == 200
     body = r.json()
+    # Phase-4 routing: a WRITE-bearing family plan parks at the approval gate.
+    if body["status"] == "waiting_approval":
+        r = client.post(f"/tasks/{task_id}/approvals",
+                        json={"decision": "approved", "approver": "operator"})
+        assert r.status_code == 200
+        worker_mod.run_once(worker_id="test-worker")
+        body = client.get(f"/tasks/{task_id}").json()
     assert body["status"] in {"completed", "waiting_for_input"}
     assert len(body.get("steps", [])) >= 1  # exact steps reconstructable
     # idempotency: same key returns same task, no duplicate
@@ -123,19 +133,20 @@ def test_stage3_task_async_idempotent_and_waiting():
     assert first["id"] == second["id"]
 
 
-def test_stage3_approval_gate():
+def test_stage3_approval_gate(monkeypatch):
+    monkeypatch.setattr("harness.agent.llm.propose_json", lambda *a, **kw: None)
     r = client.post("/cases", json={"text": "hello, just opening a case"})
     case_id = r.json()["case_id"]
     r = client.post(f"/cases/{case_id}/tasks",
                     json={"task_type": "payment_reconciliation",
-                          "instructions": "reconcile RRR 123456789014 for john@example.com paid yesterday",
+                          "instructions": "reconcile RRR 123456789012 for john@example.com paid yesterday",
                           "approval_required": "always"})
     task_id = r.json()["id"]
     # ensure required fields exist so plan reaches the gate
     db = SessionLocal()
     try:
         svc.process_new_input(db, case_id=case_id,
-                              raw_text="RRR 123456789014 paid yesterday for account john@example.com")
+                              raw_text="RRR 123456789012 paid yesterday for account john@example.com")
         from harness.store import models as M
         t = db.get(M.Task, task_id)
         t.status = "queued"

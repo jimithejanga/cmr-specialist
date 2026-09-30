@@ -12,6 +12,11 @@ TASK_FLOWS: dict[str, list[str]] = {
     "change_of_ownership": ["validate_fields", "knowledge_lookup", "draft_solution"],
     "general_support": ["knowledge_lookup", "draft_solution"],
 }
+# Phase-4 routing: task type -> formulation family executed end to end.
+FAMILY_ROUTE: dict[str, str] = {
+    "payment_reconciliation": "payment_issue",
+    "change_of_ownership": "change_of_ownership",
+}
 
 
 def build_plan(task_type: str, task_id: str, fields: dict, needs_approval: bool = False) -> Plan:
@@ -43,6 +48,20 @@ def propose_plan(task_type: str, task_id: str, fields: dict,
     candidates = TASK_FLOWS.get(task_type, TASK_FLOWS["general_support"])
     from harness.tools import formulations as F
     write_tools = {fid for fid, form in F.CATALOG.items() if form.verb == "WRITE"}
+    # Phase-4 routing: these families execute through CHECK/WRITE plans so
+    # user journeys exercise the same sealed boundary a real connector uses.
+    family = FAMILY_ROUTE.get(task_type)
+    if family:
+        candidates = F.viable_family_plan(family, fields)
+        is_family = True
+    else:
+        is_family = False
+    if is_family and not candidates:
+        # Nothing resolvable: fall back to the internal-tool template so the
+        # task still validates, waits, and explains instead of empty-planning.
+        plan = build_plan(task_type, task_id, fields, needs_approval)
+        plan.proposed_by = "template"
+        return plan
 
     ordered: list[str] | None = None
     try:
@@ -62,7 +81,10 @@ def propose_plan(task_type: str, task_id: str, fields: dict,
         print(f"[planner] proposal failed, using template: {exc}", flush=True)
         ordered = None
     if not ordered:
-        plan = build_plan(task_type, task_id, fields, needs_approval)
+        if is_family:
+            plan = build_family_plan(family, task_id, fields)
+        else:
+            plan = build_plan(task_type, task_id, fields, needs_approval)
         plan.proposed_by = "template"
         return plan
 
@@ -70,6 +92,16 @@ def propose_plan(task_type: str, task_id: str, fields: dict,
     steps = []
     for i, tool in enumerate(tools):
         key = hashlib.sha256(f"{task_id}|{i}|{tool}".encode()).hexdigest()[:12]
+        if is_family:
+            form = F.CATALOG[tool]
+            steps.append(PlanStep(
+                sequence=i, action=f"{tool} (step {i + 1}/{len(tools)})", tool=tool,
+                optional=False,
+                arguments={"fields": fields},
+                requires_approval=(form.verb == "WRITE"),
+                idempotency_key=f"{task_id}-s{i}-{key}",
+            ))
+            continue
         steps.append(PlanStep(
             sequence=i, action=f"{tool} (step {i + 1}/{len(tools)})", tool=tool,
             optional=(tool == "knowledge_lookup"),
@@ -95,10 +127,10 @@ def build_knowledge_plan(query_id: str) -> Plan:
 
 
 def build_family_plan(family: str, task_id: str, fields: dict) -> Plan:
-    """Plan steps naming CHECK/WRITE formulations (PDF v3 §8)."""
+    """Plan steps naming CHECK/WRITE formulations (PDF v3 §8), viability-pruned."""
     from harness.tools import formulations as F
 
-    tools = F.FAMILY_PLANS.get(family, [])
+    tools = F.viable_family_plan(family, fields)
     if len(tools) > settings.MAX_PLAN_STEPS:
         tools = tools[: settings.MAX_PLAN_STEPS]
     steps = []
@@ -107,7 +139,7 @@ def build_family_plan(family: str, task_id: str, fields: dict) -> Plan:
         form = F.CATALOG[tool]
         steps.append(PlanStep(
             sequence=i, action=f"{tool} (step {i + 1}/{len(tools)})", tool=tool,
-            optional=(tool == "knowledge_lookup"),
+            optional=False,
             arguments={"fields": fields},
             requires_approval=form.verb == "WRITE",
             idempotency_key=f"{task_id}-s{i}-{key}",

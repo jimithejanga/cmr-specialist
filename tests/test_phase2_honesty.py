@@ -96,44 +96,46 @@ def test_approval_bound_to_exact_plan():
     r = client.post(f"/tasks/{tid}/approvals",
                     json={"decision": "approved", "reason": "exact"}, headers=h)
     assert r.status_code == 200, r.text
-    # tamper with the stored plan (simulates a replan after approval)
+    # change the underlying FACTS (simulates new input after approval):
+    # execution rebuilds the family plan, whose hash must void the old approval
     db = SessionLocal()
     try:
-        import json
-        t = db.get(R.M.Task, tid)
-        pj = json.loads(t.plan_json)
-        pj["steps"].append({"sequence": 99, "action": "evil", "tool": "draft_solution",
-                            "arguments": {}, "requires_approval": False,
-                            "optional": False, "idempotency_key": f"{tid}-s99"})
-        t.plan_json = json.dumps(pj)
+        from harness.store import models as M
+
+        t = db.get(M.Task, tid)
+        case_id = t.case_id
+        R.store_extracted_fields(
+            db, case_id=case_id, source_input_id="tamper", extraction_run_id="tamper",
+            fields=[{"name": "account_identifier", "data_type": "string",
+                     "raw_value": "acct-TAMPERED", "normalized_value": "acct-TAMPERED",
+                     "confidence": 0.6, "validation": "valid"}])
+        t.status = "queued"
         db.commit()
     finally:
         db.close()
-    # re-run: tampered plan must NOT ride the old approval
     db2 = SessionLocal()
     try:
         from harness.store import models as M
         from sqlalchemy import select as _select
 
         t2 = db2.get(M.Task, tid)
-        # reset to queued so the worker would pick it up
-        t2.status = "queued"
-        db2.commit()
         out = svc.execute_task(db2, t2, worker_id="test")
         t3 = db2.get(M.Task, tid)
-        if t3.status == "waiting_approval":
-            pass  # correct: tampered plan re-gated for fresh approval
-        else:
-            # completed/failed only acceptable with the tamper on record.
-            steps = db2.scalars(_select(M.RunStep).where(
-                M.RunStep.task_id == tid)).all()
-            assert any("s99" in (s.idempotency_key or "") for s in steps) or t3.status == "failed"
+        # changed facts -> rebuilt plan -> old approval void -> re-gated
+        assert t3.status == "waiting_approval", (t3.status, out)
+        approvals = db2.scalars(_select(M.Approval).where(
+            M.Approval.task_id == tid)).all()
+        assert len([a for a in approvals if a.decision == "pending"]) >= 1
     finally:
         db2.close()
 
 
-def test_plan_hash_changes_on_reorder():
+def test_plan_hash_ignores_order_but_binds_content():
     p1 = _mkplan("t", ["validate_fields", "draft_solution"])
     p2 = _mkplan("t", ["draft_solution", "validate_fields"])
-    assert policy_mod.plan_hash(p1) != policy_mod.plan_hash(p2)
-    assert policy_mod.plan_hash(p1) == policy_mod.plan_hash(_mkplan("t", ["validate_fields", "draft_solution"]))
+    assert policy_mod.plan_hash(p1) == policy_mod.plan_hash(p2)  # reorder: same act
+    p3 = _mkplan("t", ["validate_fields", "draft_solution"])
+    p3.steps[0].arguments = {"tampered": True}
+    assert policy_mod.plan_hash(p1) != policy_mod.plan_hash(p3)  # re-argued: voided
+    p4 = _mkplan("t", ["validate_fields"])
+    assert policy_mod.plan_hash(p1) != policy_mod.plan_hash(p4)  # dropped: voided

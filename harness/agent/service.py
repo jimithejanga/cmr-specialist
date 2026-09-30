@@ -67,8 +67,15 @@ def _formulation_args(fields: dict, results: dict, task) -> dict:
                   "new_value", "request_age_days", "medium"):
             if data.get(k) and not args.get(k):
                 args[k] = data[k]
+    # Phase-4: the searched buyer IS the transfer buyer.
+    if not args.get("buyer_profile_id") and args.get("profile_id"):
+        args["buyer_profile_id"] = args["profile_id"]
     if task is not None and getattr(task, "instructions", None) and not args.get("reason"):
         args["reason"] = (task.instructions or "")[:300]
+    # Phase-4: transfers need a document reference; default to the case/task
+    # so the step is explicit and audited rather than missing. Still overridable.
+    if task is not None and not args.get("doc_ref"):
+        args["doc_ref"] = f"case:{task.case_id}/task:{task.id}"
     return {k: v for k, v in args.items() if v is not None}
 
 
@@ -168,7 +175,11 @@ def queue_task(db: Session, *, case_id: str, task_type: str,
                    "arguments": s.arguments, "requires_approval": s.requires_approval,
                    "optional": s.optional,
                    "idempotency_key": s.idempotency_key} for s in plan.steps]})
-    if plan.steps and any(s.requires_approval for s in plan.steps):
+    # Phase-4: family plans are preliminary until execution (fields arrive
+    # via follow-ups), so their approval is requested at execution on the
+    # final plan - requesting now would bind the wrong hash and loop.
+    if plan.steps and any(s.requires_approval for s in plan.steps) \
+            and task_type not in planner_mod.FAMILY_ROUTE:
         R.request_approval(db, task_id=task.id,
                            requested_action=f"execute {plan.proposed_by}-proposed plan",
                            action_hash=policy_mod.plan_hash(plan))
@@ -285,7 +296,13 @@ def execute_task(db: Session, task: M.Task, *, worker_id: str = "worker") -> dic
         return {"task_id": task.id, "status": "waiting_for_input", "missing": missing}
 
     stored = json.loads(task.plan_json) if task.plan_json else None
-    if stored and stored.get("steps"):
+    # Phase-4: family plans are viability-pruned against live fields, so they
+    # are re-proposed at execution (fields may have arrived via follow-ups).
+    # Approval binds at execution on the final plan - never on a preliminary one.
+    if task.task_type in planner_mod.FAMILY_ROUTE:
+        plan = planner_mod.propose_plan(task.task_type, task.id, fields,
+                                        needs_approval=(task.approval_required != "never"))
+    elif stored and stored.get("steps"):
         from harness.agent.schemas import Plan as _Plan, PlanStep as _PlanStep
         plan = _Plan(task_type=stored.get("task_type", task.task_type),
                      proposed_by=stored.get("proposed_by", "template"),
@@ -295,18 +312,22 @@ def execute_task(db: Session, task: M.Task, *, worker_id: str = "worker") -> dic
                                         needs_approval=(task.approval_required != "never"))
     effective_requirement = task.approval_required
     current_hash = policy_mod.plan_hash(plan)
-    if task.approval_required != "never":
-        approved = db.scalar(select(M.Approval).where(
-            M.Approval.task_id == task.id, M.Approval.decision == "approved")
-            .order_by(M.Approval.decided_at.desc()))
-        # Phase-2 binding: only a matching approval unlocks, and only the
-        # exact act it was requested for. A replanned task re-gates.
-        if approved is not None and approved.action_hash == current_hash:
-            # One matching human approval unlocks this exact plan; no loop.
-            effective_requirement = "never"
-            for s in plan.steps:
-                s.requires_approval = False
-    decision = policy_mod.check(plan, approval_required=effective_requirement)
+    approval_satisfied = False
+    # A bound, matching approval satisfies the gate whether or not this task
+    # demanded one: the human approved this exact act, so it may run.
+    approved = db.scalar(select(M.Approval).where(
+        M.Approval.task_id == task.id, M.Approval.decision == "approved")
+        .order_by(M.Approval.decided_at.desc()))
+    # Phase-2 binding: only a matching approval unlocks, and only the
+    # exact act it was requested for. A replanned task re-gates.
+    if approved is not None and approved.action_hash == current_hash:
+        # One matching human approval unlocks this exact plan; no loop.
+        effective_requirement = "never"
+        approval_satisfied = True
+        for s in plan.steps:
+            s.requires_approval = False
+    decision = policy_mod.check(plan, approval_required=effective_requirement,
+                                approval_satisfied=approval_satisfied)
     task.plan_json = json.dumps({"task_type": plan.task_type,
                                  "proposed_by": plan.proposed_by,
                                  "steps": [s.model_dump() for s in plan.steps]})

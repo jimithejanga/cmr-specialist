@@ -47,6 +47,10 @@ def _evidence_refs(db, task_id: str) -> list:
                 for k in ("status", "verdict"):
                     if data.get(k):
                         refs.append(f"{k}={data[k]}")
+                # Phase-4: receipt verdicts become named evidence tokens so
+                # WRITE.payment.* evidence="receipt=paid" can match them.
+                if data.get("rrr") and data.get("status"):
+                    refs.append(f"receipt={data['status']}")
     return refs
 
 

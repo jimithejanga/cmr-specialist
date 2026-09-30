@@ -120,3 +120,54 @@ FAMILY_PLANS: dict[str, list[str]] = {
                           "WRITE.certificate.renew", "WRITE.certificate.resend",
                           "WRITE.certificate.correct"],
 }
+
+# Phase-4 viability: a formulation step is only plannable when its inputs
+# resolve. Case-field names map to argument names; doc_ref/reason are always
+# defaulted by the service; prior steps' declared returns chain forward.
+FIELD_ARG_NAMES = {
+    "remita_rrr": "rrr", "rrr": "rrr",
+    "plate_number": "plate", "plate": "plate",
+    "chassis_number": "chassis", "chassis": "chassis",
+    "nin": "nin", "phone": "phone", "email": "email",
+    "account_identifier": "account", "account": "account", "tin": "tin",
+}
+ALWAYS_PROVIDED = {"doc_ref", "reason"}
+# The searched buyer IS the transfer buyer: profile_id satisfies it.
+SATISFIED_BY = {"buyer_profile_id": "profile_id"}
+
+
+def _resolves(name: str, provided: set[str]) -> bool:
+    if name in provided:
+        return True
+    alt = SATISFIED_BY.get(name)
+    return bool(alt and alt in provided)
+
+
+def viable_family_plan(family: str, fields: dict) -> list[str]:
+    """Prune a family template to steps whose inputs resolve.
+
+    A step survives when every required input resolves (from case fields,
+    always-defaulted args, or an earlier surviving step's returns) AND at
+    least one input resolves at all (a CHECK with zero identifiers is not a
+    check, it is a guess). Returns the surviving formulation IDs in order.
+    """
+    tools = FAMILY_PLANS.get(family, [])
+    provided: set[str] = set()
+    for fname, arg in FIELD_ARG_NAMES.items():
+        if (fields or {}).get(fname):
+            provided.add(arg)
+    provided |= set(ALWAYS_PROVIDED)
+    viable: list[str] = []
+    for fid in tools:
+        form = CATALOG.get(fid)
+        if form is None:
+            continue
+        inputs = form.inputs or {}
+        required = [n for n, s in inputs.items() if s.get("required")]
+        if any(not _resolves(n, provided) for n in required):
+            continue
+        if inputs and not any(_resolves(n, provided) for n in inputs):
+            continue
+        viable.append(fid)
+        provided |= set(form.returns or ())
+    return viable

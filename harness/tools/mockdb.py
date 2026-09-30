@@ -157,6 +157,11 @@ class MockDB:
             ref = f"TRF-{len(self.transfers) + 1:04d}"
             self.transfers[ref] = {"vehicle_id": vehicle_id, "buyer": buyer_profile_id,
                                    "doc_ref": doc_ref}
+            # A transfer that does not move ownership is a memo, not a transfer.
+            for v in self.vehicles.values():
+                if v.get("vehicle_id") == vehicle_id:
+                    v["owner"] = buyer_profile_id
+                    v["owner_history"] = int(v.get("owner_history") or 0) + 1
             return {"status": "initiated", "transfer_ref": ref}
         return self._once(idempotency_key, _fire)
 
