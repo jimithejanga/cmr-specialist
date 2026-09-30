@@ -210,9 +210,11 @@ def health(db: Session = Depends(get_db)):
     except Exception as exc:
         db_ok = f"error: {exc}"
     oldest = db.scalar(select(func.min(M.Task.created_at)).where(M.Task.status == "queued"))
-    age = int((datetime.now(timezone.utc) - oldest).total_seconds()) if oldest else None
-    if oldest is not None and getattr(oldest, "tzinfo", None) is None:
-        age = int((datetime.now(timezone.utc) - oldest.replace(tzinfo=timezone.utc)).total_seconds())
+    age = None
+    if oldest is not None:
+        if getattr(oldest, "tzinfo", None) is None:
+            oldest = oldest.replace(tzinfo=timezone.utc)
+        age = int((datetime.now(timezone.utc) - oldest).total_seconds())
     return {"status": "ok" if db_ok == "connected" else "degraded",
             "version": settings.APP_VERSION, "database": db_ok,
             "oldest_queued_job_age_s": age,
