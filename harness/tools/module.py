@@ -413,16 +413,18 @@ def _resolve_owner(session, owner_value: str | None) -> str | None:
     a profile FK. Resolve either, else create a synthetic stub profile."""
     from registry import repository as _repo
 
-    if not owner_value:
-        return None
-    hit = (_repo.find_profile_by_id(session, owner_value)
-           or _repo.find_profile_by_name(session, owner_value))
-    if hit is not None:
-        return hit.profile_id
-    n = session.query(_repo.Profile).count() + 1
-    stub = _repo.create_profile(session, profile_id=f"prof-{n:03d}",
-                                full_name=owner_value, synthetic=True)
-    return stub.profile_id
+    return _repo.resolve_owner(session, owner_value)
+
+
+def registry_db_name() -> str:
+    """Short database name for the reseed ceremony (never a URL/secret)."""
+    import os as _os
+
+    from configs.settings import settings as _s
+
+    url = _os.getenv("REGISTRY_DATABASE_URL", "") or _s.REGISTRY_DATABASE_URL
+    base = url.split("?", 1)[0].rstrip("/").rsplit("/", 1)[-1]
+    return base or "registry.db"
 
 
 def insert_row(table: str, key: str, row: dict) -> None:

@@ -20,6 +20,10 @@ from registry.models import (Certificate, Profile, Receipt, RegistryCounter,
                              Token, Transfer, Vehicle)
 
 
+class VersionConflict(Exception):
+    """Optimistic-lock failure: the row moved under the editor's hands."""
+
+
 # ── profiles ─────────────────────────────────────────────────────────────
 def find_profile(session, *, phone=None, email=None, nin=None) -> Profile | None:
     conds = []
@@ -227,3 +231,104 @@ def clear_all(session) -> None:
                   RegistryCounter):
         session.query(model).delete()
     session.flush()
+
+
+# ── operator updates (guarded; every one feeds) ───────────────────────────
+def resolve_owner(session, owner_value: str | None) -> str | None:
+    """Legacy seeds/admin rows name owners by id OR by name; the tables need
+    a profile FK. Resolve either, else create a synthetic stub profile."""
+    if not owner_value:
+        return None
+    hit = (find_profile_by_id(session, owner_value)
+           or find_profile_by_name(session, owner_value))
+    if hit is not None:
+        return hit.profile_id
+    n = session.query(Profile).count() + 1
+    stub = create_profile(session, profile_id=f"prof-{n:03d}",
+                          full_name=owner_value, synthetic=True)
+    return stub.profile_id
+
+
+def _find_profile_any(session, key: str) -> Profile | None:
+    return (find_profile(session, phone=key, email=key, nin=key)
+            or find_profile_by_id(session, key))
+
+
+def update_profile(session, key: str, **fields) -> Profile:
+    allowed = ("full_name", "phone", "email", "nin")
+    p = _find_profile_any(session, key)
+    if p is None:
+        raise TerminalError(f"not-found: profile {key}")
+    before, after = {}, {}
+    for name in allowed:
+        if name in fields and fields[name] is not None:
+            before[name] = getattr(p, name)
+            setattr(p, name, fields[name])
+            after[name] = fields[name]
+    if not after:
+        raise TerminalError("nothing to update")
+    session.flush()
+    _feed.record(session, table="profiles", row_key=p.profile_id,
+                 action="update", before=before, after=after)
+    return p
+
+
+def update_vehicle(session, key: str, *, owner=None, chassis=None,
+                   expected_version=None) -> Vehicle:
+    v = (find_vehicle(session, plate=key, chassis=key)
+         or session.get(Vehicle, key))
+    if v is None:
+        raise TerminalError(f"not-found: vehicle {key}")
+    if expected_version is not None and v.version != expected_version:
+        raise VersionConflict(
+            f"vehicle {v.plate} is version {v.version}, "
+            f"you edited {expected_version}; re-read and retry")
+    before = {"owner": v.owner_profile_id, "chassis": v.chassis}
+    if owner is not None:
+        v.owner_profile_id = resolve_owner(session, owner)
+    if chassis is not None:
+        v.chassis = chassis
+    v.version = (v.version or 1) + 1
+    session.flush()
+    _feed.record(session, table="vehicles", row_key=v.vehicle_id,
+                 action="update",
+                 before=before,
+                 after={"owner": v.owner_profile_id, "chassis": v.chassis,
+                        "version": v.version})
+    return v
+
+
+def set_receipt_status(session, rrr: str, status: str | None) -> Receipt:
+    if status not in ("paid", "unpaid", "void"):
+        raise TerminalError(f"bad receipt status: {status}")
+    row = find_receipt(session, rrr)
+    if row is None:
+        raise TerminalError(f"not-found: receipt {rrr}")
+    before = row.status
+    row.status = status
+    session.flush()
+    _feed.record(session, table="receipts", row_key=rrr, action="update",
+                 before={"status": before}, after={"status": status})
+    return row
+
+
+def set_certificate_status(session, key: str, status: str | None) -> Certificate:
+    if status not in ("active", "expired", "revoked"):
+        raise TerminalError(f"bad certificate status: {status}")
+    row = session.get(Certificate, key)
+    if row is None:
+        v = find_vehicle(session, plate=key)
+        row = active_certificate(session, v.vehicle_id) if v else None
+    if row is None:
+        raise TerminalError(f"not-found: certificate {key}")
+    if status == "active":
+        other = active_certificate(session, row.vehicle_id)
+        if other is not None and other.cert_no != row.cert_no:
+            other.status = "expired"
+    before = row.status
+    row.status = status
+    session.flush()
+    _feed.record(session, table="certificates", row_key=row.vehicle_id,
+                 action="update", before={"status": before, "cert_no": row.cert_no},
+                 after={"status": status, "cert_no": row.cert_no})
+    return row
