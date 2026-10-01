@@ -5,13 +5,13 @@
 <button onclick="login()">sign in</button><button onclick="logout()">sign out</button><span id="who">anonymous</span></div>
 <div class="row">
 <select id="tbl"><option value="profiles">profile</option><option value="vehicles">vehicle</option><option value="receipts">receipt</option></select>
-<input id="key" placeholder="phone / plate / RRR" size="24"><button onclick="links()">open biography</button></div>
+<input id="key" placeholder="phone / plate / RRR" size="24"><button onclick="openBio()">open biography</button></div>
 <div id="msg"></div>
 <div id="out"></div>
 <script src="/console/shared.js"></script>
 <script>
 Shell('links'); whoami();
-async function links() {
+async function openBio() {
   const t = document.getElementById('tbl').value, k = document.getElementById('key').value;
   const r = await api('/links/' + t + '/' + encodeURIComponent(k), {headers: hdr()});
   const o = document.getElementById('out');
