@@ -55,7 +55,7 @@ class MockDB:
         db.receipts = {
             "123456789012": {"rrr": "123456789012", "status": "paid",
                              "amount": 5000, "date": "2026-09-10",
-                             "linked_account": "acct-X"},
+                             "linked_account": None},  # unlinked until a WRITE links it
         }
         db.certificates = {
             "ABC123XY": {"plate": "ABC123XY", "status": "approved",

@@ -20,7 +20,8 @@ def exam_1_known_receipt(audit_db):
                 arguments={"rrr": "123456789012"})
     d = env.get("data") or {}
     ok = (env["status"] == "ok" and d.get("status") == "paid"
-          and d.get("amount") == 5000 and d.get("linked_account") == "acct-X")
+          and d.get("amount") == 5000
+          and d.get("linked_account") is None)  # seed starts unlinked; linking is a WRITE's job
     return ok, f"status={env['status']} data={d}"
 
 
@@ -45,22 +46,22 @@ def exam_3_double_link(audit_db):
     d2 = (e2.get("data") or {})
     ok = (e1["status"] == "ok" and e2["status"] == "ok"
           and d2.get("duplicate") is True
-          and M._db.receipts["123456789012"]["linked_account"] == "acct-Y")
+          and M.receipt_account("123456789012") == "acct-Y")
     return ok, f"first={e1['status']} second_dup={d2.get('duplicate')}"
 
 
 def exam_4_write_without_approval(audit_db):
     from harness.tools import module as M
     M.reset_mock()
-    before = list(M._db.tokens_sent)
+    before = list(M.token_log())
     env = _fire(audit_db, formulation_id="WRITE.token.resend",
                 arguments={"profile_id": "prof-001", "medium": "phone"},
                 idempotency_key="exam4-key")
     from harness.store import models as SM
     from sqlalchemy import select, func
     audits = audit_db.scalar(select(func.count()).select_from(SM.ToolAudit)) or 0
-    ok = (env["status"] == "parked" and M._db.tokens_sent == before and audits >= 1)
-    return ok, f"status={env['status']} side_effects={len(M._db.tokens_sent) - len(before)} audits={audits}"
+    ok = (env["status"] == "parked" and M.token_log() == before and audits >= 1)
+    return ok, f"status={env['status']} side_effects={len(M.token_log()) - len(before)} audits={audits}"
 
 
 def exam_5_write_without_evidence(audit_db):

@@ -40,7 +40,13 @@ def _heartbeat():
 def _db():
     from harness.tools import module as _mod
 
-    return _mod._db
+    return _mod.dump_state()
+
+
+def _reset_backend():
+    from harness.tools import module as _mod
+
+    _mod.reset_mock()
 
 
 def _admin(db: Session, authorization: Optional[str], x_api_key: Optional[str]) -> M.User:
@@ -53,10 +59,18 @@ def mockdb_dump(authorization: Optional[str] = Header(default=None),
                 db: Session = Depends(get_db)):
     _admin(db, authorization, x_api_key)
     m = _db()
-    return {"process": "web", "note": "admin inserts persist to the shared overlay file, so the worker sees them too",
-            "tables": {t: getattr(m, t) for t in _MOCK_TABLES},
-            "transfers": m.transfers, "tokens_sent": m.tokens_sent,
-            "faults": m.faults}
+    return {"process": "web",
+            "note": ("registry tables (relational backend)" if _backend_is_relational()
+                     else "admin inserts persist to the shared overlay file, so the worker sees them too"),
+            "tables": {t: m[t] for t in _MOCK_TABLES},
+            "transfers": m["transfers"],
+            "tokens_sent": m["tokens_sent"], "faults": m["faults"]}
+
+
+def _backend_is_relational() -> bool:
+    from harness.tools import module as _mod
+
+    return _mod.backend_name() == "relational"
 
 
 @router.post("/mockdb/reset")
@@ -64,11 +78,8 @@ def mockdb_reset(authorization: Optional[str] = Header(default=None),
                  x_api_key: Optional[str] = Header(default=None),
                  db: Session = Depends(get_db)):
     _admin(db, authorization, x_api_key)
-    from harness.tools import module as _mod
-
-    _mod._db = _mod.MockDB.seeded()
-    _mod.clear_overlay()
-    return {"ok": True, "note": "web-process mockDB reseeded"}
+    _reset_backend()
+    return {"ok": True, "note": "registry reseeded"}
 
 
 @router.post("/mockdb/{table}")
@@ -90,10 +101,12 @@ def mockdb_insert(table: str, record: dict[str, Any],
     row["synthetic"] = True
     row["inserted_by"] = admin.username
     row["inserted_at"] = datetime.now(timezone.utc).isoformat()
-    getattr(_db(), table)[key] = row
     from harness.tools import module as _mod
 
-    _mod.save_overlay_row(table, key, row)  # visible to the worker process too
+    try:
+        _mod.insert_row(table, key, row)  # legacy: dict+overlay; relational: tables
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"insert refused: {exc}")
     return {"ok": True, "table": table, "key": key, "synthetic": True}
 
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import re
 import time
 import uuid
@@ -17,7 +18,46 @@ from harness.tools import formulations as F
 from harness.tools.mockdb import MockDB, TerminalError, TransientError
 
 # Module-owned database handle. Nothing outside this module may import it.
-_db = MockDB.seeded()
+# Two backends, one contract: the legacy dict backend (default while the
+# relational twin proves itself) and the relational registry database.
+# MOCKDB_BACKEND=relational flips the switch; nothing else moves.
+_BACKEND = os.getenv("MOCKDB_BACKEND", None)
+if _BACKEND is None:
+    from configs.settings import settings as _settings
+
+    _BACKEND = _settings.MOCKDB_BACKEND
+
+
+def _build_backend(name: str):
+    if name == "relational":
+        from harness.tools.connector import RelationalDB
+
+        return RelationalDB()
+    return MockDB.seeded()
+
+
+_db = _build_backend(_BACKEND)
+
+
+def select_backend(name: str):
+    """Switch backends in-process (tests/conformance). Returns the handle."""
+    global _db, _BACKEND
+    _BACKEND = name
+    _db = _build_backend(name)
+    return _db
+
+
+def backend_name() -> str:
+    return "relational" if not isinstance(_db, MockDB) else "legacy"
+
+
+def simulate_restart():
+    """Drop in-process memory without touching durable state: legacy keeps
+    the overlay file (reapplied lazily, exactly like a real restart);
+    relational reconnects to the same database file."""
+    global _db
+    _db = _build_backend(_BACKEND)
+    return _db
 
 
 def _service_token() -> str:
@@ -40,8 +80,8 @@ def _check_token(token: str | None) -> bool:
     return bool(token) and hmac.compare_digest(str(token), _service_token())
 
 
-# formulation id -> mockdb method + arg mapping
-def _dispatch(db: MockDB, fid: str, a: dict, idem: str | None):
+# formulation id -> backend method + arg mapping (both backends share it)
+def _dispatch(db, fid: str, a: dict, idem: str | None):
     if fid == "CHECK.profile.lookup":
         return db.lookup_profile(phone=a.get("phone"), email=a.get("email"))
     if fid == "CHECK.nin.verify":
@@ -106,7 +146,8 @@ def fire(*, formulation_id: str, arguments: dict | None = None,
     started = time.perf_counter()
     arguments = arguments or {}
     evidence_refs = evidence_refs or []
-    _apply_overlay(_db)
+    if isinstance(_db, MockDB):
+        _apply_overlay(_db)
     envelope: dict = {"status": "failed", "error_ref": None, "data": None,
                       "evidence_ref": None, "audit_id": None}
     audit_error: str | None = None
@@ -231,11 +272,228 @@ def _idem_store(audit_db, key: str, formulation_id: str, data: dict) -> None:
 
 
 def reset_mock(**faults) -> None:
-    """Test/chaos helper: reseed mock + set fault switches."""
+    """Test/chaos helper: reseed backend + set fault switches."""
     global _db
-    _db = MockDB.seeded()
+    if isinstance(_db, MockDB):
+        _db = MockDB.seeded()
+        _db.faults = dict(faults)
+        clear_overlay()
+        return
+    from registry import repository as _repo
+    from registry import seed as _seed
+    from registry.database import RegistrySession
+
+    with RegistrySession() as s:
+        _repo.clear_all(s)
+        s.commit()
+    with RegistrySession() as s:
+        _seed.seed_all(s)
+        s.commit()
     _db.faults = dict(faults)
-    clear_overlay()
+    _db._once_cache = {}
+
+
+# ── backend-agnostic inspection + writes (tests, conformance, admin) ─────
+def dump_state() -> dict:
+    """Whole backend in legacy shapes: the admin explorer and the exam
+    paper never learn which backend is underneath."""
+    if isinstance(_db, MockDB):
+        return {"profiles": dict(_db.profiles), "vehicles": dict(_db.vehicles),
+                "receipts": dict(_db.receipts),
+                "certificates": dict(_db.certificates),
+                "transfers": dict(_db.transfers),
+                "tokens_sent": list(_db.tokens_sent),
+                "faults": dict(_db.faults)}
+    from registry import repository as _repo
+    from registry.database import RegistrySession
+    from registry.models import Certificate, Profile, Receipt, Token, Transfer, Vehicle
+    from sqlalchemy import select
+
+    with RegistrySession() as s:
+        profiles = {}
+        for p in s.scalars(select(Profile)).all():
+            profiles[p.phone or p.email or p.profile_id] = {
+                "profile_id": p.profile_id, "phone": p.phone, "email": p.email,
+                "name": p.full_name, "nin": p.nin, "synthetic": p.is_synthetic}
+        vehicles = {}
+        for v in s.scalars(select(Vehicle)).all():
+            owner = s.get(Profile, v.owner_profile_id)
+            vehicles[v.plate] = {
+                "vehicle_id": v.vehicle_id, "plate": v.plate,
+                "chassis": v.chassis, "owner": owner.full_name if owner else None,
+                "cert_state": {"issued": "valid"}.get(v.cert_state, v.cert_state),
+                "owner_history": _repo.history_count(s, v.vehicle_id),
+                "synthetic": v.is_synthetic}
+        receipts = {}
+        for r in s.scalars(select(Receipt)).all():
+            receipts[r.rrr] = {
+                "rrr": r.rrr, "status": r.status,
+                "amount": (r.amount_kobo or 0) // 100,
+                "date": r.paid_at.date().isoformat() if r.paid_at else None,
+                "linked_account": r.linked_account, "synthetic": r.is_synthetic}
+        certificates = {}
+        for c in s.scalars(select(Certificate).where(
+                Certificate.status == "active")).all():
+            v = s.get(Vehicle, c.vehicle_id)
+            if v is None:
+                continue
+            certificates[v.plate] = {
+                "plate": v.plate, "status": "approved",
+                "request_age_h": c.request_age_h,
+                "expiry": c.expires_at.date().isoformat() if c.expires_at else None,
+                "cert_no": c.cert_no, "synthetic": c.is_synthetic}
+        transfers = {t.transfer_ref: {"vehicle_id": t.vehicle_id,
+                                      "buyer": t.buyer_profile_id,
+                                      "doc_ref": t.doc_ref}
+                     for t in s.scalars(select(Transfer)).all()}
+        tokens = [{"profile_id": t.profile_id,
+                   "medium": {"sms": "phone"}.get(t.channel, t.channel)}
+                  for t in s.scalars(select(Token)).all()]
+        return {"profiles": profiles, "vehicles": vehicles,
+                "receipts": receipts, "certificates": certificates,
+                "transfers": transfers, "tokens_sent": tokens,
+                "faults": dict(_db.faults)}
+
+
+def token_log() -> list:
+    return dump_state()["tokens_sent"]
+
+
+def receipt_account(rrr: str):
+    row = dump_state()["receipts"].get(rrr) or {}
+    return row.get("linked_account")
+
+
+def vehicle_owner_id(plate: str):
+    """Current owner's profile_id (post-transfer both backends agree)."""
+    if isinstance(_db, MockDB):
+        return (_db.vehicles.get(plate) or {}).get("owner")
+    from registry import repository as _repo
+    from registry.database import RegistrySession
+
+    with RegistrySession() as s:
+        v = _repo.find_vehicle(s, plate=plate)
+        return v.owner_profile_id if v else None
+
+
+def _resolve_owner(session, owner_value: str | None) -> str | None:
+    """Legacy seeds/admin rows name owners by id OR by name; the tables need
+    a profile FK. Resolve either, else create a synthetic stub profile."""
+    from registry import repository as _repo
+
+    if not owner_value:
+        return None
+    hit = (_repo.find_profile_by_id(session, owner_value)
+           or _repo.find_profile_by_name(session, owner_value))
+    if hit is not None:
+        return hit.profile_id
+    n = session.query(_repo.Profile).count() + 1
+    stub = _repo.create_profile(session, profile_id=f"prof-{n:03d}",
+                                full_name=owner_value, synthetic=True)
+    return stub.profile_id
+
+
+def insert_row(table: str, key: str, row: dict) -> None:
+    """Admin/test upsert of one synthetic row (legacy: dict + overlay file;
+    relational: straight into the tables, synthetic-flagged)."""
+    if isinstance(_db, MockDB):
+        row = dict(row)
+        if table == "vehicles":
+            row.setdefault("owner_history", 1)
+            row.setdefault("cert_state", "valid")
+        getattr(_db, table)[key] = row
+        save_overlay_row(table, key, row)
+        return
+    from datetime import datetime
+
+    from harness.tools.connector import _CERT_STATE_IN
+    from registry import repository as _repo
+    from registry.database import RegistrySession
+
+    with RegistrySession() as s:
+        if table == "profiles":
+            pid = row.get("profile_id") or f"prof-{s.query(_repo.Profile).count() + 1:03d}"
+            hit = _repo.find_profile_by_id(s, pid)
+            data = dict(name=row.get("name") or row.get("full_name"),
+                        phone=row.get("phone"), email=row.get("email"),
+                        nin=row.get("nin"))
+            if hit is None:
+                _repo.create_profile(s, profile_id=pid, full_name=data["name"],
+                                     phone=data["phone"], email=data["email"],
+                                     nin=data["nin"], synthetic=True)
+            else:
+                for k, col in (("name", "full_name"), ("phone", "phone"),
+                               ("email", "email"), ("nin", "nin")):
+                    if data[k] is not None:
+                        setattr(hit, col, data[k])
+                hit.is_synthetic = True
+        elif table == "vehicles":
+            owner_id = _resolve_owner(s, row.get("owner"))
+            if owner_id is None:
+                from harness.tools.mockdb import TerminalError as _TE
+
+                raise _TE("vehicle insert needs an owner (profile id or name)")
+            vid = row.get("vehicle_id") or f"veh-{s.query(_repo.Vehicle).count() + 1:03d}"
+            hit = _repo.find_vehicle(s, plate=key)
+            state = _CERT_STATE_IN.get(row.get("cert_state"), "none")
+            if hit is None:
+                _repo.create_vehicle(s, vehicle_id=vid, plate=key,
+                                     chassis=row.get("chassis"),
+                                     owner_profile_id=owner_id,
+                                     cert_state=state, synthetic=True)
+            else:
+                hit.owner_profile_id = owner_id
+                if row.get("chassis"):
+                    hit.chassis = row["chassis"]
+                hit.is_synthetic = True
+        elif table == "receipts":
+            paid = None
+            if row.get("date"):
+                try:
+                    paid = datetime.fromisoformat(str(row["date"])[:10])
+                except ValueError:
+                    paid = None
+            hit = _repo.find_receipt(s, key)
+            if hit is None:
+                _repo.create_receipt(s, rrr=key,
+                                     status=row.get("status", "unpaid"),
+                                     amount_kobo=int(row.get("amount", 0)) * 100,
+                                     paid_at=paid, synthetic=True)
+                if row.get("linked_account"):
+                    _repo.link_receipt(s, key, row["linked_account"])
+            else:
+                hit.status = row.get("status", hit.status)
+                hit.is_synthetic = True
+        elif table == "certificates":
+            v = _repo.find_vehicle(s, plate=key)
+            if v is None:
+                from harness.tools.mockdb import TerminalError as _TE
+
+                raise _TE("not-found: vehicle for certificate")
+            status = {"approved": "active", "active": "active"}.get(
+                row.get("status"), "active")
+            old = _repo.active_certificate(s, v.vehicle_id)
+            if status == "active" and old is not None:
+                old.status = "expired"
+            cno = row.get("cert_no") or f"CMR-{(s.query(_repo.Certificate).count() + 1):04d}"
+            exp = None
+            if row.get("expiry"):
+                try:
+                    exp = datetime.fromisoformat(str(row["expiry"])[:10])
+                except ValueError:
+                    exp = None
+            _repo.renew_certificate(s, vehicle_id=v.vehicle_id, cert_no=cno,
+                                    expires_at=exp,
+                                    request_age_h=row.get("request_age_h"))
+            if status != "active":
+                new = s.get(_repo.Certificate, cno)
+                if new is not None:
+                    new.status = status
+        else:
+            from harness.tools.mockdb import TerminalError as _TE
+
+            raise _TE(f"unknown table: {table}")
+        s.commit()
 
 
 def overlay_path() -> str:

@@ -57,27 +57,25 @@ def test_write_survives_mock_restart():
     db = SessionLocal()
     try:
         mod.reset_mock()
-        e1 = mod.fire(formulation_id="WRITE.payment.link",
-                      arguments={"rrr": "123456789012", "account": "acct-phase3"},
+        e1 = mod.fire(formulation_id="WRITE.token.resend",
+                      arguments={"profile_id": "prof-001", "medium": "phone"},
                       service_token="cmr-tool-token-dev",
                       approval_ref="approval:test",
-                      evidence_refs=["receipt=paid"],
                       idempotency_key="phase3-key", audit_db=db)
         assert e1["status"] == "ok", e1
-        linked = mod._db.receipts["123456789012"]["linked_account"]
-        assert linked == "acct-phase3", linked
+        assert len(mod.token_log()) == 1
         # simulate process restart: fresh memory, same database
-        mod._db = mod.MockDB.seeded()
-        e2 = mod.fire(formulation_id="WRITE.payment.link",
-                      arguments={"rrr": "123456789012", "account": "acct-phase3"},
+        mod.simulate_restart()
+        e2 = mod.fire(formulation_id="WRITE.token.resend",
+                      arguments={"profile_id": "prof-001", "medium": "phone"},
                       service_token="cmr-tool-token-dev",
                       approval_ref="approval:test",
-                      evidence_refs=["receipt=paid"],
                       idempotency_key="phase3-key", audit_db=db)
         assert e2["status"] == "ok", e2
         assert (e2.get("data") or {}).get("duplicate") is True
-        # side effect NOT re-fired: fresh seed still points at the old account
-        assert mod._db.receipts["123456789012"]["linked_account"] != "acct-phase3"
+        # side effect NOT re-fired: legacy memory was wiped (0 tokens on the
+        # fresh copy); the relational database kept exactly the one write
+        assert len(mod.token_log()) == (1 if mod.backend_name() == "relational" else 0)
     finally:
         db.close()
         mod.reset_mock()

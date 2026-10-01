@@ -68,6 +68,15 @@ class Settings(BaseModel):
     HOST: str = os.getenv("HARNESS_HOST", "0.0.0.0")
     PORT: int = int(os.getenv("HARNESS_PORT", "8080"))
 
+    # Mock CMR registry: separate database + backend switch. Pilot runs the
+    # legacy dict backend; MOCKDB_BACKEND=relational points the module at the
+    # relational registry (REGISTRY_DATABASE_URL, default var/registry.db).
+    MOCKDB_BACKEND: str = os.getenv("MOCKDB_BACKEND", "relational")
+    REGISTRY_DATABASE_URL: str = os.getenv(
+        "REGISTRY_DATABASE_URL",
+        f"sqlite:///{Path(__file__).resolve().parent.parent / 'var' / 'registry.db'}",
+    )
+
     # Lean spec (v2.0) — agent harness / worker / retrieval controls
     APP_VERSION: str = os.getenv("APP_VERSION", "2.0.0")
     MAX_INPUT_CHARS: int = int(os.getenv("MAX_INPUT_CHARS", "6000"))

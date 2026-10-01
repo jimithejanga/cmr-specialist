@@ -44,12 +44,13 @@ def test_ownership_writes_end_to_end():
     h = _login("phase4boss", "phase4-pass-1")
     mod.reset_mock()
     # synthetic world: seller owns the car, buyer exists with a phone
-    mod._db.profiles["08090001111"] = {"profile_id": "prof-p4", "phone": "08090001111",
-                                       "name": "P4 Buyer", "synthetic": True}
-    mod._db.vehicles["P4TESTXY"] = {"vehicle_id": "veh-p4", "plate": "P4TESTXY",
-                                    "chassis": "CHSP4000001", "owner": "P4 Seller",
-                                    "cert_state": "valid", "owner_history": 1,
-                                    "synthetic": True}
+    mod.insert_row("profiles", "08090001111",
+                   {"profile_id": "prof-p4", "phone": "08090001111",
+                    "name": "P4 Buyer", "synthetic": True})
+    mod.insert_row("vehicles", "P4TESTXY",
+                   {"vehicle_id": "veh-p4", "plate": "P4TESTXY",
+                    "chassis": "CHSP4000001", "owner": "P4 Seller",
+                    "cert_state": "valid", "synthetic": True})
     db = SessionLocal()
     try:
         case = R.create_case_shell(db, title="p4 ownership")
@@ -83,8 +84,8 @@ def test_ownership_writes_end_to_end():
             db.commit()
             out = svc.execute_task(db, t, worker_id="test")
             assert out["status"] == "completed", out
-            assert mod._db.vehicles["P4TESTXY"]["owner"] == "prof-p4", \
-                mod._db.vehicles["P4TESTXY"]
+            assert mod.vehicle_owner_id("P4TESTXY") == "prof-p4", \
+                mod.dump_state()["vehicles"].get("P4TESTXY")
             audits = db.scalars(select(M.ToolAudit).where(
                 M.ToolAudit.formulation_id == "WRITE.transfer.initiate")).all()
             assert len(audits) >= 1

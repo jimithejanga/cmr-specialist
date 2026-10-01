@@ -2,6 +2,16 @@
 so every test starts from empty tables. Without this, deterministic
 idempotency keys collide across files and tests pass alone but fail together.
 """
+import os
+import tempfile
+
+# The relational registry gets the same treatment as the agent store: one
+# temp file per pytest process, chosen before any harness import builds an
+# engine. Live var/registry.db is never touched by the suite.
+_reg = tempfile.NamedTemporaryFile(suffix="-registry.db", delete=False)
+_reg.close()
+os.environ["REGISTRY_DATABASE_URL"] = f"sqlite:///{_reg.name}"
+
 import pytest
 from sqlalchemy import text
 
