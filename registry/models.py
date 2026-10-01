@@ -111,3 +111,19 @@ class RegistryCounter(RegistryBase):
 
     name: Mapped[str] = mapped_column(String(16), primary_key=True)
     next_val: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class RegistryChange(RegistryBase):
+    """Append-only change feed. Written in-transaction by repository
+    mutations; read by operators. No update/delete path exists on purpose."""
+
+    __tablename__ = "registry_changes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    table_name: Mapped[str] = mapped_column(String(32), nullable=False)
+    row_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    before_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    after_json: Mapped[str | None] = mapped_column(Text, nullable=True)

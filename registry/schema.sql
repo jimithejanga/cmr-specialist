@@ -91,3 +91,19 @@ CREATE TABLE IF NOT EXISTS registry_counters (
     name     TEXT PRIMARY KEY,              -- 'TRF' | 'CORR' | 'TOK'
     next_val INTEGER NOT NULL DEFAULT 1
 );
+
+-- Change feed: append-only memory of what happened. Written in-transaction
+-- by every repository mutation (a change without a feed row is impossible);
+-- read newest-first by operators. No UPDATE/DELETE path, ever.
+CREATE TABLE IF NOT EXISTS registry_changes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    actor       TEXT NOT NULL,               -- agent:<formulation> | <username> | system:reset
+    action      TEXT NOT NULL,               -- insert|transfer|link|renew|token|reseed|update
+    table_name  TEXT NOT NULL,
+    row_key     TEXT NOT NULL,
+    before_json TEXT,                        -- NULL = row did not exist
+    after_json  TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_changes_table_row ON registry_changes (table_name, row_key);
+CREATE INDEX IF NOT EXISTS ix_changes_actor ON registry_changes (actor);

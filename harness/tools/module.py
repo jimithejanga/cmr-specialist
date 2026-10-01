@@ -16,6 +16,7 @@ import uuid
 
 from harness.tools import formulations as F
 from harness.tools.mockdb import MockDB, TerminalError, TransientError
+from registry import feed as _feed
 
 # Module-owned database handle. Nothing outside this module may import it.
 # Two backends, one contract: the legacy dict backend (default while the
@@ -220,7 +221,8 @@ def fire(*, formulation_id: str, arguments: dict | None = None,
     last_err: str | None = None
     for _ in range(attempts):
         try:
-            data = _dispatch(_db, formulation_id, arguments, idempotency_key)
+            with _feed.acting(f"agent:{formulation_id}"):
+                data = _dispatch(_db, formulation_id, arguments, idempotency_key)
             envelope["status"] = "ok"
             envelope["data"] = data
             ref = f"{formulation_id}:{hashlib.sha256(json.dumps(data, default=str).encode()).hexdigest()[:8]}"
@@ -287,7 +289,13 @@ def reset_mock(**faults) -> None:
         _repo.clear_all(s)
         s.commit()
     with RegistrySession() as s:
-        _seed.seed_all(s)
+        with _feed.acting("system:seed"):
+            _seed.seed_all(s)
+        s.commit()
+    with RegistrySession() as s:
+        with _feed.acting("system:reset"):
+            _feed.record(s, table="registry", row_key="all", action="reseed",
+                         after={"backend": "relational"})
         s.commit()
     _db.faults = dict(faults)
     _db._once_cache = {}
@@ -357,6 +365,30 @@ def dump_state() -> dict:
 
 def token_log() -> list:
     return dump_state()["tokens_sent"]
+
+
+def feed_changes(*, table=None, actor=None, row_key=None, limit=100) -> list:
+    """Newest-first change feed (relational backend; legacy has no feed)."""
+    if isinstance(_db, MockDB):
+        return []
+    import json as _json
+
+    from registry import feed as _feed_mod
+    from registry.database import RegistrySession
+
+    def _parse(v):
+        try:
+            return _json.loads(v) if v else None
+        except Exception:
+            return v
+
+    with RegistrySession() as s:
+        rows = _feed_mod.list_changes(s, table=table, actor=actor,
+                                      row_key=row_key, limit=limit)
+        return [{"id": r.id, "at": r.at.isoformat() if r.at else None,
+                 "actor": r.actor, "action": r.action, "table": r.table_name,
+                 "row": r.row_key, "before": _parse(r.before_json),
+                 "after": _parse(r.after_json)} for r in rows]
 
 
 def receipt_account(rrr: str):

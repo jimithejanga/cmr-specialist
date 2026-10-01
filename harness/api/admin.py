@@ -102,9 +102,11 @@ def mockdb_insert(table: str, record: dict[str, Any],
     row["inserted_by"] = admin.username
     row["inserted_at"] = datetime.now(timezone.utc).isoformat()
     from harness.tools import module as _mod
+    from registry import feed as _feed
 
     try:
-        _mod.insert_row(table, key, row)  # legacy: dict+overlay; relational: tables
+        with _feed.acting(admin.username):
+            _mod.insert_row(table, key, row)  # legacy: dict+overlay; relational: tables
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"insert refused: {exc}")
     return {"ok": True, "table": table, "key": key, "synthetic": True}

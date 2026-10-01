@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, or_, select
 
 from harness.tools.mockdb import TerminalError
+from registry import feed as _feed
 from registry.models import (Certificate, Profile, Receipt, RegistryCounter,
                              Token, Transfer, Vehicle)
 
@@ -47,6 +48,9 @@ def create_profile(session, *, profile_id, full_name=None, phone=None,
                   email=email, nin=nin, is_synthetic=bool(synthetic))
     session.add(row)
     session.flush()
+    _feed.record(session, table="profiles", row_key=profile_id, action="insert",
+                 after={"full_name": full_name, "phone": phone,
+                        "email": email, "nin": nin})
     return row
 
 
@@ -69,6 +73,8 @@ def create_vehicle(session, *, vehicle_id, plate, chassis=None,
                   is_synthetic=bool(synthetic))
     session.add(row)
     session.flush()
+    _feed.record(session, table="vehicles", row_key=vehicle_id, action="insert",
+                 after={"plate": plate, "owner": owner_profile_id})
     return row
 
 
@@ -108,6 +114,7 @@ def execute_transfer(session, *, vehicle_id, buyer_profile_id, doc_ref=None,
     if buyer is None:
         raise TerminalError("not-found: buyer profile")
     ref = f"TRF-{next_counter(session, 'TRF'):04d}"
+    before_owner = vehicle.owner_profile_id
     row = Transfer(transfer_ref=ref, vehicle_id=vehicle_id,
                    seller_profile_id=vehicle.owner_profile_id,
                    buyer_profile_id=buyer_profile_id, doc_ref=doc_ref,
@@ -118,6 +125,9 @@ def execute_transfer(session, *, vehicle_id, buyer_profile_id, doc_ref=None,
     vehicle.owner_profile_id = buyer_profile_id
     vehicle.version = (vehicle.version or 1) + 1
     session.flush()
+    _feed.record(session, table="vehicles", row_key=vehicle_id, action="transfer",
+                 before={"owner": before_owner},
+                 after={"owner": buyer_profile_id, "transfer_ref": ref})
     return row
 
 
@@ -132,6 +142,8 @@ def create_receipt(session, *, rrr, status="unpaid", amount_kobo,
                   paid_at=paid_at, is_synthetic=bool(synthetic))
     session.add(row)
     session.flush()
+    _feed.record(session, table="receipts", row_key=rrr, action="insert",
+                 after={"status": status, "amount_kobo": amount_kobo})
     return row
 
 
@@ -150,9 +162,13 @@ def link_receipt(session, rrr: str, account: str) -> Receipt:
         raise TerminalError("receipt not paid; cannot link")
     if row.linked_account is not None and row.linked_account != account:
         raise TerminalError("receipt already linked; void-and-relink required")
+    before = row.linked_account
     row.linked_account = account
     row.linked_at = datetime.now(timezone.utc).replace(tzinfo=None)
     session.flush()
+    _feed.record(session, table="receipts", row_key=rrr, action="link",
+                 before={"linked_account": before},
+                 after={"linked_account": account})
     return row
 
 
@@ -170,6 +186,7 @@ def certificate_history(session, vehicle_id: str) -> list[Certificate]:
 def renew_certificate(session, *, vehicle_id, cert_no, expires_at,
                       request_age_h=None) -> Certificate:
     old = active_certificate(session, vehicle_id)
+    before = {"cert_no": old.cert_no, "status": old.status} if old else None
     if old is not None:
         old.status = "expired"  # history kept, never deleted
     row = Certificate(cert_no=cert_no, vehicle_id=vehicle_id, status="active",
@@ -179,6 +196,8 @@ def renew_certificate(session, *, vehicle_id, cert_no, expires_at,
     if vehicle is not None:
         vehicle.cert_state = "issued"
     session.flush()
+    _feed.record(session, table="certificates", row_key=vehicle_id, action="renew",
+                 before=before, after={"cert_no": cert_no, "status": "active"})
     return row
 
 
@@ -192,6 +211,8 @@ def log_token(session, *, profile_id, channel, template="generic") -> Token:
                 delivered_at=datetime.now(timezone.utc).replace(tzinfo=None))
     session.add(row)
     session.flush()
+    _feed.record(session, table="tokens", row_key=token_id, action="token",
+                 after={"profile_id": profile_id, "channel": channel})
     return row
 
 
