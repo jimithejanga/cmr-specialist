@@ -30,12 +30,10 @@ def _fire(**kw):
 
 
 def setup_function(_):
-    mod.select_backend("relational")
     mod.reset_mock()
 
 
 def teardown_function(_):
-    mod.select_backend("legacy")
     mod.reset_mock()
 
 

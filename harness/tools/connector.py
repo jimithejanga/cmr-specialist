@@ -1,7 +1,6 @@
 """Registry connector: the ONLY bridge between agent and registry database.
 
-``RelationalDB`` exposes the exact method surface of the legacy dict backend
-(``harness/tools/mockdb.py``) so the module's ``_dispatch`` calls it blind -
+``RelationalDB`` is what the module's ``_dispatch`` calls blind -
 formulation in, rows out, identical envelopes. Translations live here and
 nowhere else:
 
@@ -20,7 +19,7 @@ from __future__ import annotations
 import time
 from datetime import date, datetime
 
-from harness.tools.mockdb import TerminalError, TransientError
+from registry.errors import TerminalError, TransientError
 from registry import repository as repo
 from registry.database import RegistrySession, init_registry_db
 from registry.models import Certificate, Profile, Receipt, Token, Transfer, Vehicle
@@ -59,7 +58,7 @@ def _parse_date(value) -> datetime | None:
 
 
 class RelationalDB:
-    """SQL-backed twin of ``MockDB``: same methods, same envelopes."""
+    """Registry backend behind the module's dispatch: same methods, same envelopes."""
 
     def __init__(self) -> None:
         init_registry_db(seed_if_empty=True)

@@ -1,0 +1,35 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Registry - Links</title>
+<link rel="stylesheet" href="/console/shared.css"></head><body>
+<div id="shell"></div>
+<div class="row"><input id="u" placeholder="username" size="12"><input id="p" type="password" placeholder="password" size="12">
+<button onclick="login()">sign in</button><button onclick="logout()">sign out</button><span id="who">anonymous</span></div>
+<div class="row">
+<select id="tbl"><option value="profiles">profile</option><option value="vehicles">vehicle</option><option value="receipts">receipt</option></select>
+<input id="key" placeholder="phone / plate / RRR" size="24"><button onclick="links()">open biography</button></div>
+<div id="msg"></div>
+<div id="out"></div>
+<script src="/console/shared.js"></script>
+<script>
+Shell('links'); whoami();
+async function links() {
+  const t = document.getElementById('tbl').value, k = document.getElementById('key').value;
+  const r = await api('/links/' + t + '/' + encodeURIComponent(k), {headers: hdr()});
+  const o = document.getElementById('out');
+  if (!r.ok) { o.innerHTML = '<div class="err">' + esc((r.body || {}).detail || r.status) + '</div>'; return; }
+  const b = r.body;
+  let h = '';
+  if (b.profile) {
+    h += '<h3>Profile</h3>' + kv(b.profile);
+    h += '<h3>Vehicles (' + b.vehicles.length + ')</h3>' + (b.vehicles.map(v => kv(v)).join('') || 'none');
+    h += '<h3>Transfers (' + b.transfers.length + ')</h3>' + (b.transfers.map(x => kv(x)).join('') || 'none');
+    h += '<h3>Tokens (' + b.tokens.length + ')</h3>' + (b.tokens.map(x => kv(x)).join('') || 'none');
+  } else if (b.vehicle) {
+    h += '<h3>Vehicle</h3>' + kv(b.vehicle);
+    h += '<h3>Ownership history (' + b.transfers.length + ' transfers)</h3>' + (b.transfers.map(x => kv(x)).join('') || 'initial registration only');
+    h += '<h3>Certificates (' + b.certificates.length + ')</h3>' + (b.certificates.map(x => kv(x)).join('') || 'none');
+  } else if (b.receipt) {
+    h += '<h3>Receipt</h3>' + kv(b.receipt) + '<p class="mono">' + esc(b.note || '') + '</p>';
+  } else { h = kv(b.row); }
+  o.innerHTML = h;
+}
+</script></body></html>

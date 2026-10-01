@@ -26,7 +26,6 @@ def _fire(**kw):
 
 def setup_function(_):
     global _RESEED_ID
-    mod.select_backend("relational")
     mod.reset_mock()
     # the reseed ceremony row marks the current world's beginning - everything
     # at or below it belongs to previous worlds and is ignored by these tests
@@ -38,7 +37,6 @@ def _current(rows):
 
 
 def teardown_function(_):
-    mod.select_backend("legacy")
     mod.reset_mock()
 
 

@@ -70,12 +70,7 @@ def test_mockdb_insert_is_synthetic_and_reset():
     dump = client.get("/admin/mockdb", headers=h).json()
     row = dump["tables"]["receipts"]["999900001111"]
     assert row["synthetic"] is True
-    # authorship rides in the row on the legacy backend; the relational
-    # tables carry no authorship columns - that moves to the change feed
-    from harness.tools import module as _mod
-
-    if _mod.backend_name() == "legacy":
-        assert row["inserted_by"] == "boss"
+    # authorship lives in the change feed now, not the tables
     r = client.post("/admin/mockdb/reset", headers=h)
     assert r.status_code == 200
     dump = client.get("/admin/mockdb", headers=h).json()

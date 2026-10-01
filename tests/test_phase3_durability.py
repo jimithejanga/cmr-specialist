@@ -73,9 +73,8 @@ def test_write_survives_mock_restart():
                       idempotency_key="phase3-key", audit_db=db)
         assert e2["status"] == "ok", e2
         assert (e2.get("data") or {}).get("duplicate") is True
-        # side effect NOT re-fired: legacy memory was wiped (0 tokens on the
-        # fresh copy); the relational database kept exactly the one write
-        assert len(mod.token_log()) == (1 if mod.backend_name() == "relational" else 0)
+        # side effect NOT re-fired: the database kept exactly the one write
+        assert len(mod.token_log()) == 1
     finally:
         db.close()
         mod.reset_mock()

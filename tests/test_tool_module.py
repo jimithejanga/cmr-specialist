@@ -185,14 +185,3 @@ def test_conformance_gate_green():
     assert not failures, f"conformance failures: {failures}"
     assert len(results) == 6
 
-
-def test_conformance_gate_green_relational():
-    mod.select_backend("relational")
-    try:
-        mod.reset_mock()
-        results = conformance.run_all(_db())
-        failures = [(n, d) for n, ok, d in results if not ok]
-        assert not failures, f"relational conformance failures: {failures}"
-        assert len(results) == 6
-    finally:
-        mod.select_backend("legacy")

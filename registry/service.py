@@ -17,6 +17,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -30,6 +31,13 @@ from registry.database import RegistrySession, init_registry_db
 from registry.models import Certificate, Profile, Receipt, Token, Transfer, Vehicle
 
 app = FastAPI(title="Mock CMR Registry")
+
+# Operator console (static pages, same origin): tables, links, feed.
+_CONSOLE_DIR = os.path.join(os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__))), "registry-console")
+if os.path.isdir(_CONSOLE_DIR):
+    app.mount("/console", StaticFiles(directory=_CONSOLE_DIR, html=True),
+              name="console")
 
 _TABLES = ("profiles", "vehicles", "receipts", "certificates", "transfers", "tokens")
 _KEY_COLUMN = {"profiles": "profile_id", "vehicles": "vehicle_id",

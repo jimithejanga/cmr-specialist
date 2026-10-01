@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import func, or_, select
 
-from harness.tools.mockdb import TerminalError
+from registry.errors import TerminalError
 from registry import feed as _feed
 from registry.models import (Certificate, Profile, Receipt, RegistryCounter,
                              Token, Transfer, Vehicle)

@@ -1,0 +1,108 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Registry - Tables</title>
+<link rel="stylesheet" href="/console/shared.css"></head><body>
+<div id="shell"></div>
+<div class="row"><input id="u" placeholder="username" size="12"><input id="p" type="password" placeholder="password" size="12">
+<button onclick="login()">sign in</button><button onclick="logout()">sign out</button><span id="who">anonymous</span></div>
+<div class="row">
+<select id="tbl"><option>profiles</option><option>vehicles</option><option>receipts</option><option>certificates</option><option>transfers</option><option>tokens</option></select>
+<input id="q" placeholder="search" size="20"><button onclick="browse()">browse</button>
+<span id="counts"></span></div>
+<div id="msg"></div>
+<div id="rows"></div>
+<fieldset><legend>Insert synthetic row</legend><div id="form"></div>
+<div class="row"><button onclick="insertRow()">insert</button><span id="insmsg"></span></div></fieldset>
+<fieldset><legend>Row detail / edit</legend><div class="row"><input id="key" placeholder="plate / RRR / phone / id" size="24"><button onclick="detail()">open</button></div><div id="det"></div></fieldset>
+<script src="/console/shared.js"></script>
+<script>
+Shell('index'); whoami(); counts();
+const FIELDS = {
+  profiles: ['phone','email','name','nin'],
+  vehicles: ['plate','chassis','owner'],
+  receipts: ['rrr','status','amount','date'],
+  certificates: ['plate','cert_no','status','expiry']
+};
+function form() {
+  const t = document.getElementById('tbl').value;
+  document.getElementById('form').innerHTML = (FIELDS[t] || []).map(f =>
+    '<div class="row"><label>' + f + '</label><input id="f_' + f + '" size="30"></div>').join('') ||
+    '<span class="mono">transfers and tokens are written by the agent only</span>';
+}
+async function counts() {
+  const r = await api('/tables', {headers: hdr()});
+  if (r.ok) document.getElementById('counts').textContent =
+    Object.entries(r.body.tables).map(([k, v]) => k + ': ' + v).join('  ');
+}
+async function browse() {
+  const t = document.getElementById('tbl').value, q = document.getElementById('q').value;
+  const r = await api('/tables/' + t + '?search=' + encodeURIComponent(q), {headers: hdr()});
+  if (!r.ok) { document.getElementById('msg').innerHTML = '<div class="err">' + esc((r.body || {}).detail || r.status) + '</div>'; return; }
+  document.getElementById('msg').textContent = '';
+  const rows = r.body.rows;
+  if (!rows.length) { document.getElementById('rows').textContent = 'no rows'; return; }
+  const cols = Object.keys(rows[0]);
+  document.getElementById('rows').innerHTML = '<table class="grid"><tr>' +
+    cols.map(c => '<th>' + esc(c) + '</th>').join('') + '</tr>' +
+    rows.map(x => '<tr>' + cols.map(c => '<td>' + esc(x[c]) + '</td>').join('') + '</tr>').join('') + '</table>';
+  counts();
+}
+async function insertRow() {
+  const t = document.getElementById('tbl').value, rec = {};
+  (FIELDS[t] || []).forEach(f => { const v = document.getElementById('f_' + f).value; if (v) rec[f] = f === 'amount' ? +v : v; });
+  const r = await api('/tables/' + t, {method: 'POST', headers: hdr(), body: JSON.stringify(rec)});
+  document.getElementById('insmsg').innerHTML = r.ok
+    ? '<span class="okmsg">inserted ' + esc(r.body.key) + ' by ' + esc(r.body.by) + '</span>'
+    : '<span class="err">' + esc((r.body || {}).detail || r.status) + '</span>';
+  if (r.ok) browse();
+}
+async function detail() {
+  const t = document.getElementById('tbl').value, k = document.getElementById('key').value;
+  const r = await api('/tables/' + t + '/' + encodeURIComponent(k), {headers: hdr()});
+  const d = document.getElementById('det');
+  if (!r.ok) { d.innerHTML = '<div class="err">' + esc((r.body || {}).detail || r.status) + '</div>'; return; }
+  d.innerHTML = kv(r.body) + editForm(t, r.body);
+}
+function editForm(t, row) {
+  if (t === 'vehicles') return '<div class="row"><input id="e_owner" placeholder="new owner id or name" size="20">' +
+    '<input id="e_ver" placeholder="version ' + esc(row.version) + '" size="10">' +
+    '<button onclick="editVehicle()">change owner</button><span id="emsg"></span></div>';
+  if (t === 'profiles') return '<div class="row"><input id="e_phone" placeholder="phone" size="14"><input id="e_email" placeholder="email" size="18">' +
+    '<button onclick="editProfile()">update</button><span id="emsg"></span></div>';
+  if (t === 'receipts') return '<div class="row"><select id="e_status"><option>paid</option><option>unpaid</option><option>void</option></select>' +
+    '<button onclick="editReceipt()">set status</button><span id="emsg"></span></div>';
+  if (t === 'certificates') return '<div class="row"><select id="e_status"><option>active</option><option>expired</option><option>revoked</option></select>' +
+    '<button onclick="editCert()">set status</button><span id="emsg"></span></div>';
+  return '';
+}
+async function editVehicle() {
+  const t = 'vehicles', k = document.getElementById('key').value;
+  const r = await api('/tables/' + t + '/' + encodeURIComponent(k), {method: 'PATCH', headers: hdr(),
+    body: JSON.stringify({owner: document.getElementById('e_owner').value || undefined, version: +document.getElementById('e_ver').value})});
+  done(r, 'owner moved');
+}
+async function editProfile() {
+  const k = document.getElementById('key').value;
+  const r = await api('/tables/profiles/' + encodeURIComponent(k), {method: 'PATCH', headers: hdr(),
+    body: JSON.stringify({phone: document.getElementById('e_phone').value || undefined, email: document.getElementById('e_email').value || undefined})});
+  done(r, 'profile updated');
+}
+async function editReceipt() {
+  const k = document.getElementById('key').value;
+  const r = await api('/tables/receipts/' + encodeURIComponent(k), {method: 'PATCH', headers: hdr(),
+    body: JSON.stringify({status: document.getElementById('e_status').value})});
+  done(r, 'status set');
+}
+async function editCert() {
+  const k = document.getElementById('key').value;
+  const cur = document.getElementById('tbl').value === 'certificates' ? k : k;
+  const r = await api('/tables/certificates/' + encodeURIComponent(k), {method: 'PATCH', headers: hdr(),
+    body: JSON.stringify({status: document.getElementById('e_status').value})});
+  done(r, 'status set');
+}
+function done(r, what) {
+  document.getElementById('emsg').innerHTML = r.ok
+    ? '<span class="okmsg">' + what + '</span>'
+    : '<span class="err">' + esc((r.body || {}).detail || r.status) + '</span>';
+  if (r.ok) { detail(); browse(); }
+}
+document.getElementById('tbl').addEventListener('change', form); form();
+</script></body></html>

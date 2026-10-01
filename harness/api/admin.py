@@ -60,17 +60,10 @@ def mockdb_dump(authorization: Optional[str] = Header(default=None),
     _admin(db, authorization, x_api_key)
     m = _db()
     return {"process": "web",
-            "note": ("registry tables (relational backend)" if _backend_is_relational()
-                     else "admin inserts persist to the shared overlay file, so the worker sees them too"),
+            "note": "registry tables (relational backend)",
             "tables": {t: m[t] for t in _MOCK_TABLES},
             "transfers": m["transfers"],
             "tokens_sent": m["tokens_sent"], "faults": m["faults"]}
-
-
-def _backend_is_relational() -> bool:
-    from harness.tools import module as _mod
-
-    return _mod.backend_name() == "relational"
 
 
 @router.post("/mockdb/reset")

@@ -15,49 +15,20 @@ import time
 import uuid
 
 from harness.tools import formulations as F
-from harness.tools.mockdb import MockDB, TerminalError, TransientError
+from harness.tools.connector import RelationalDB
 from registry import feed as _feed
+from registry.errors import TerminalError, TransientError
 
 # Module-owned database handle. Nothing outside this module may import it.
-# Two backends, one contract: the legacy dict backend (default while the
-# relational twin proves itself) and the relational registry database.
-# MOCKDB_BACKEND=relational flips the switch; nothing else moves.
-_BACKEND = os.getenv("MOCKDB_BACKEND", None)
-if _BACKEND is None:
-    from configs.settings import settings as _settings
-
-    _BACKEND = _settings.MOCKDB_BACKEND
-
-
-def _build_backend(name: str):
-    if name == "relational":
-        from harness.tools.connector import RelationalDB
-
-        return RelationalDB()
-    return MockDB.seeded()
-
-
-_db = _build_backend(_BACKEND)
-
-
-def select_backend(name: str):
-    """Switch backends in-process (tests/conformance). Returns the handle."""
-    global _db, _BACKEND
-    _BACKEND = name
-    _db = _build_backend(name)
-    return _db
-
-
-def backend_name() -> str:
-    return "relational" if not isinstance(_db, MockDB) else "legacy"
+# The dict backend is retired: the registry database is the only backend.
+_db = RelationalDB()
 
 
 def simulate_restart():
-    """Drop in-process memory without touching durable state: legacy keeps
-    the overlay file (reapplied lazily, exactly like a real restart);
-    relational reconnects to the same database file."""
+    """Drop in-process memory without touching durable state: reconnect to
+    the same database file with empty caches."""
     global _db
-    _db = _build_backend(_BACKEND)
+    _db = RelationalDB()
     return _db
 
 
@@ -147,8 +118,6 @@ def fire(*, formulation_id: str, arguments: dict | None = None,
     started = time.perf_counter()
     arguments = arguments or {}
     evidence_refs = evidence_refs or []
-    if isinstance(_db, MockDB):
-        _apply_overlay(_db)
     envelope: dict = {"status": "failed", "error_ref": None, "data": None,
                       "evidence_ref": None, "audit_id": None}
     audit_error: str | None = None
@@ -274,13 +243,7 @@ def _idem_store(audit_db, key: str, formulation_id: str, data: dict) -> None:
 
 
 def reset_mock(**faults) -> None:
-    """Test/chaos helper: reseed backend + set fault switches."""
-    global _db
-    if isinstance(_db, MockDB):
-        _db = MockDB.seeded()
-        _db.faults = dict(faults)
-        clear_overlay()
-        return
+    """Test/chaos helper: reseed registry + set fault switches."""
     from registry import repository as _repo
     from registry import seed as _seed
     from registry.database import RegistrySession
@@ -301,17 +264,9 @@ def reset_mock(**faults) -> None:
     _db._once_cache = {}
 
 
-# ── backend-agnostic inspection + writes (tests, conformance, admin) ─────
+# ── inspection + writes (tests, conformance, admin, registry service) ─────
 def dump_state() -> dict:
-    """Whole backend in legacy shapes: the admin explorer and the exam
-    paper never learn which backend is underneath."""
-    if isinstance(_db, MockDB):
-        return {"profiles": dict(_db.profiles), "vehicles": dict(_db.vehicles),
-                "receipts": dict(_db.receipts),
-                "certificates": dict(_db.certificates),
-                "transfers": dict(_db.transfers),
-                "tokens_sent": list(_db.tokens_sent),
-                "faults": dict(_db.faults)}
+    """Whole registry in stable shapes for explorers and the exam paper."""
     from registry import repository as _repo
     from registry.database import RegistrySession
     from registry.models import Certificate, Profile, Receipt, Token, Transfer, Vehicle
@@ -368,9 +323,7 @@ def token_log() -> list:
 
 
 def feed_changes(*, table=None, actor=None, row_key=None, limit=100) -> list:
-    """Newest-first change feed (relational backend; legacy has no feed)."""
-    if isinstance(_db, MockDB):
-        return []
+    """Newest-first change feed."""
     import json as _json
 
     from registry import feed as _feed_mod
@@ -397,9 +350,7 @@ def receipt_account(rrr: str):
 
 
 def vehicle_owner_id(plate: str):
-    """Current owner's profile_id (post-transfer both backends agree)."""
-    if isinstance(_db, MockDB):
-        return (_db.vehicles.get(plate) or {}).get("owner")
+    """Current owner's profile_id."""
     from registry import repository as _repo
     from registry.database import RegistrySession
 
@@ -428,16 +379,7 @@ def registry_db_name() -> str:
 
 
 def insert_row(table: str, key: str, row: dict) -> None:
-    """Admin/test upsert of one synthetic row (legacy: dict + overlay file;
-    relational: straight into the tables, synthetic-flagged)."""
-    if isinstance(_db, MockDB):
-        row = dict(row)
-        if table == "vehicles":
-            row.setdefault("owner_history", 1)
-            row.setdefault("cert_state", "valid")
-        getattr(_db, table)[key] = row
-        save_overlay_row(table, key, row)
-        return
+    """Operator/test upsert of one synthetic row, straight into the tables."""
     from datetime import datetime
 
     from harness.tools.connector import _CERT_STATE_IN
@@ -464,7 +406,7 @@ def insert_row(table: str, key: str, row: dict) -> None:
         elif table == "vehicles":
             owner_id = _resolve_owner(s, row.get("owner"))
             if owner_id is None:
-                from harness.tools.mockdb import TerminalError as _TE
+                from registry.errors import TerminalError as _TE
 
                 raise _TE("vehicle insert needs an owner (profile id or name)")
             vid = row.get("vehicle_id") or f"veh-{s.query(_repo.Vehicle).count() + 1:03d}"
@@ -501,7 +443,7 @@ def insert_row(table: str, key: str, row: dict) -> None:
         elif table == "certificates":
             v = _repo.find_vehicle(s, plate=key)
             if v is None:
-                from harness.tools.mockdb import TerminalError as _TE
+                from registry.errors import TerminalError as _TE
 
                 raise _TE("not-found: vehicle for certificate")
             status = {"approved": "active", "active": "active"}.get(
@@ -524,65 +466,9 @@ def insert_row(table: str, key: str, row: dict) -> None:
                 if new is not None:
                     new.status = status
         else:
-            from harness.tools.mockdb import TerminalError as _TE
+            from registry.errors import TerminalError as _TE
 
             raise _TE(f"unknown table: {table}")
         s.commit()
 
 
-def overlay_path() -> str:
-    import os
-
-    return os.getenv("MOCKDB_OVERLAY", "var/mockdb_overlay.json")
-
-
-def _apply_overlay(db: MockDB) -> None:
-    """Apply admin-inserted synthetic rows so every process sees them.
-
-    Additive upserts only: overlay rows merge into the live copy on each
-    fire, so web inserts are visible to the worker without restarts, while
-    in-process writes (transfers, tokens) are never clobbered."""
-    import json as _json
-    import os as _os
-
-    path = overlay_path()
-    if not _os.path.exists(path):
-        return
-    try:
-        with open(path) as fh:
-            overlay = _json.load(fh)
-    except Exception:
-        return
-    if not isinstance(overlay, dict):
-        return
-    for table in ("profiles", "vehicles", "receipts", "certificates"):
-        rows = overlay.get(table)
-        if isinstance(rows, dict):
-            getattr(db, table).update(rows)
-
-
-def save_overlay_row(table: str, key: str, row: dict) -> None:
-    """Persist one admin-inserted row to the shared overlay file."""
-    import json as _json
-    import os as _os
-
-    path = overlay_path()
-    overlay: dict = {}
-    if _os.path.exists(path):
-        try:
-            with open(path) as fh:
-                overlay = _json.load(fh) or {}
-        except Exception:
-            overlay = {}
-    overlay.setdefault(table, {})[key] = row
-    _os.makedirs(_os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w") as fh:
-        _json.dump(overlay, fh, indent=1)
-
-
-def clear_overlay() -> None:
-    import os as _os
-
-    path = overlay_path()
-    if _os.path.exists(path):
-        _os.remove(path)

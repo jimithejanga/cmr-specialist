@@ -68,10 +68,9 @@ class Settings(BaseModel):
     HOST: str = os.getenv("HARNESS_HOST", "0.0.0.0")
     PORT: int = int(os.getenv("HARNESS_PORT", "8080"))
 
-    # Mock CMR registry: separate database + backend switch. Pilot runs the
-    # legacy dict backend; MOCKDB_BACKEND=relational points the module at the
-    # relational registry (REGISTRY_DATABASE_URL, default var/registry.db).
-    MOCKDB_BACKEND: str = os.getenv("MOCKDB_BACKEND", "relational")
+    # Mock CMR registry: separate database (REGISTRY_DATABASE_URL, default
+    # var/registry.db). The dict backend is retired; the registry is the only
+    # backend. Pilot runs SQLite here; the VM points this at Postgres.
     REGISTRY_DATABASE_URL: str = os.getenv(
         "REGISTRY_DATABASE_URL",
         f"sqlite:///{Path(__file__).resolve().parent.parent / 'var' / 'registry.db'}",

@@ -33,7 +33,6 @@ BOSS = OUTSIDER = None
 
 def setup_function(_):
     global BOSS, OUTSIDER
-    mod.select_backend("relational")
     mod.reset_mock()
     # conftest wipes users+sessions before every test, so sessions are
     # minted fresh here, not at module import
@@ -42,12 +41,17 @@ def setup_function(_):
 
 
 def teardown_function(_):
-    mod.select_backend("legacy")
     mod.reset_mock()
 
 
 def test_health_needs_no_auth():
     assert client.get("/health").status_code == 200
+
+
+def test_console_pages_served():
+    for p in ("/console/", "/console/index.html", "/console/links.html",
+              "/console/feed.html", "/console/shared.js", "/console/shared.css"):
+        assert client.get(p).status_code == 200, p
 
 
 def test_auth_split_login_then_operator():
