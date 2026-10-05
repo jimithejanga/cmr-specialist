@@ -1,0 +1,36 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Registry - Feed</title>
+<link rel="stylesheet" href="/console/shared.css"></head><body>
+<div id="shell"></div>
+<div class="row"><input id="u" placeholder="username" size="12"><input id="p" type="password" placeholder="password" size="12">
+<button onclick="login()">sign in</button><button onclick="logout()">sign out</button><span id="who">anonymous</span></div>
+<div class="row">
+<input id="f_table" placeholder="table" size="10"><input id="f_actor" placeholder="actor" size="16"><input id="f_row" placeholder="row key" size="14">
+<button onclick="load()">filter</button><label><input type="checkbox" id="live" checked> live (5s)</label></div>
+<div id="msg"></div>
+<div id="feed"></div>
+<fieldset><legend>Reseed ceremony</legend><div class="row"><input id="confirm" placeholder="database file name" size="20">
+<button onclick="reseed()">reseed world</button><span id="rmsg"></span></div></fieldset>
+<script src="/console/shared.js"></script>
+<script>
+Shell('feed'); whoami(); load(); setInterval(() => { if (document.getElementById('live').checked) load(true); }, 5000);
+async function load(quiet) {
+  const q = 'table=' + encodeURIComponent(document.getElementById('f_table').value) +
+    '&actor=' + encodeURIComponent(document.getElementById('f_actor').value) +
+    '&row=' + encodeURIComponent(document.getElementById('f_row').value) + '&limit=100';
+  const r = await api('/feed?' + q, {headers: hdr()});
+  if (!r.ok) { if (!quiet) document.getElementById('msg').innerHTML = '<div class="err">' + esc((r.body || {}).detail || r.status) + '</div>'; return; }
+  document.getElementById('feed').innerHTML = r.body.changes.map(c => {
+    const cls = c.actor.indexOf('agent:') === 0 ? '' : (c.actor.indexOf('system:') === 0 ? 'sys' : 'op');
+    return '<div class="feeditem ' + cls + '"><b>' + esc(c.action) + '</b> ' + esc(c.table) + '/' + esc(c.row) +
+      ' <span class="badge">' + esc(c.actor) + '</span> <span class="mono">' + esc(c.at || '') + '</span><br>' +
+      '<span class="mono">- ' + esc(JSON.stringify(c.before)) + '<br>+ ' + esc(JSON.stringify(c.after)) + '</span></div>';
+  }).join('') || 'no changes';
+}
+async function reseed() {
+  const r = await api('/reset', {method: 'POST', headers: hdr(), body: JSON.stringify({confirm: document.getElementById('confirm').value})});
+  document.getElementById('rmsg').innerHTML = r.ok
+    ? '<span class="okmsg">reseeded by ' + esc(r.body.reseeded_by) + '</span>'
+    : '<span class="err">' + esc((r.body || {}).detail || r.status) + '</span>';
+  if (r.ok) load();
+}
+</script></body></html>

@@ -76,7 +76,7 @@ def test_write_parked_without_approval_no_side_effect():
                    arguments={"profile_id": "prof-001", "medium": "phone"},
                    service_token=TOKEN, idempotency_key="t-nokey", audit_db=_db())
     assert env["status"] == "parked"
-    assert mod._db.tokens_sent == []
+    assert mod.token_log() == []
 
 
 def test_write_idempotent_single_side_effect():
@@ -90,7 +90,7 @@ def test_write_idempotent_single_side_effect():
     e2 = mod.fire(audit_db=db, **kw)
     assert e1["status"] == "ok" and e2["status"] == "ok"
     assert e2["data"]["duplicate"] is True
-    assert len(mod._db.tokens_sent) == 1
+    assert len(mod.token_log()) == 1
 
 
 def test_write_refused_without_evidence():
@@ -101,7 +101,7 @@ def test_write_refused_without_evidence():
                    evidence_refs=[], idempotency_key="t-noev", audit_db=_db())
     assert env["status"] == "failed"
     assert "receipt=paid" in env["error_ref"]
-    assert mod._db.receipts["123456789012"]["linked_account"] == "acct-X"
+    assert mod.receipt_account("123456789012") is None  # refused: still unlinked
 
 
 def test_write_fires_with_approval_and_evidence():
@@ -112,7 +112,7 @@ def test_write_fires_with_approval_and_evidence():
                    evidence_refs=["receipt=paid"],
                    idempotency_key="t-ok", audit_db=_db())
     assert env["status"] == "ok"
-    assert mod._db.receipts["123456789012"]["linked_account"] == "acct-Y"
+    assert mod.receipt_account("123456789012") == "acct-Y"
 
 
 def test_audit_append_only_and_masked():
@@ -148,7 +148,9 @@ def test_family_plan_names_formulations():
     plan = planner_mod.build_family_plan(
         "payment_issue", "task-1",
         {"remita_rrr": "123456789012", "account_identifier": "acct-Y"})
-    assert [s.tool for s in plan.steps] == F.FAMILY_PLANS["payment_issue"]
+    # Phase-4 viability: vehicle lookup (no plate/chassis) and confirm
+    # (no request_ref) prune away; only resolvable steps remain.
+    assert [s.tool for s in plan.steps] == ["CHECK.receipt.lookup", "WRITE.payment.link"]
     assert all(s.tool in F.CATALOG for s in plan.steps)
 
 
@@ -182,3 +184,4 @@ def test_conformance_gate_green():
     failures = [(n, d) for n, ok, d in results if not ok]
     assert not failures, f"conformance failures: {failures}"
     assert len(results) == 6
+

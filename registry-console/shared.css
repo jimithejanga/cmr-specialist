@@ -1,0 +1,21 @@
+body{font-family:system-ui,-apple-system,sans-serif;max-width:1100px;margin:0 auto;padding:12px;color:#1a1a1a}
+header{display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #123;margin-bottom:12px}
+header h1{font-size:20px;margin:8px 0}header h1 small{color:#666;font-weight:normal}
+nav a{margin-left:12px;text-decoration:none;color:#245}nav a.on{font-weight:bold;border-bottom:2px solid #245}
+.row{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}
+input,select,button{padding:6px 8px;font-size:14px}button{cursor:pointer}
+#who{color:#555;font-size:13px}
+table.grid{border-collapse:collapse;width:100%;font-size:13px;margin-top:8px}
+table.grid th,table.grid td{border:1px solid #ccc;padding:4px 6px;text-align:left}
+table.grid th{background:#eef}table.grid tr:hover td{background:#f7f7f7}
+table.kv{border-collapse:collapse;font-size:13px;margin:8px 0}
+table.kv th,table.kv td{border:1px solid #ccc;padding:3px 8px;text-align:left}
+table.kv th{background:#eef;white-space:nowrap}
+.badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;background:#eee}
+.badge.ok{background:#cfc}.badge.warn{background:#fcc}.badge.info{background:#ccf}
+.err{color:#a00;margin:8px 0}.okmsg{color:#070;margin:8px 0}
+.feeditem{border-left:3px solid #245;padding:4px 8px;margin:6px 0;background:#fafafa;font-size:13px}
+.feeditem.op{border-color:#872}.feeditem.sys{border-color:#777}
+.mono{font-family:ui-monospace,monospace;font-size:12px}
+fieldset{margin:12px 0}legend{font-weight:bold}
+label{display:inline-block;min-width:130px}

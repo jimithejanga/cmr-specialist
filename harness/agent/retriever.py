@@ -33,15 +33,24 @@ def retrieve(db: Session, query: str, top_k: int | None = None) -> list[Citation
         select(M.KnowledgeVersion.id).where(M.KnowledgeVersion.status == "active")).all()
     if not active_version_ids:
         return []
-    chunks = db.scalars(select(M.KnowledgeChunk)
-                        .where(M.KnowledgeChunk.version_id.in_(active_version_ids))
-                        .limit(2000)).all()
+    # Phase-4: no fixed candidate cap. Scan in batches so recall is bounded
+    # by relevance, not by an arbitrary LIMIT; retrieval quality (recall)
+    # stays separately measurable from answer verification (validator).
     scored: list[CitationHit] = []
-    for c in chunks:
-        s = _score(query, c.text)
-        if s >= settings.RETRIEVAL_MIN_SCORE:
-            scored.append(CitationHit(version_id=c.version_id, chunk_id=c.id,
-                                      document_id=c.document_id, text=c.text,
-                                      page=c.page, locator=c.locator, score=round(s, 4)))
+    offset = 0
+    batch = 500
+    while True:
+        chunks = db.scalars(select(M.KnowledgeChunk)
+                            .where(M.KnowledgeChunk.version_id.in_(active_version_ids))
+                            .order_by(M.KnowledgeChunk.id).offset(offset).limit(batch)).all()
+        if not chunks:
+            break
+        for c in chunks:
+            s = _score(query, c.text)
+            if s >= settings.RETRIEVAL_MIN_SCORE:
+                scored.append(CitationHit(version_id=c.version_id, chunk_id=c.id,
+                                          document_id=c.document_id, text=c.text,
+                                          page=c.page, locator=c.locator, score=round(s, 4)))
+        offset += batch
     scored.sort(key=lambda h: h.score, reverse=True)
     return scored[:k]

@@ -176,6 +176,8 @@ class Approval(Base):
     requested_action: Mapped[str] = mapped_column(String(256))
     requester: Mapped[str | None] = mapped_column(String(128), nullable=True)
     approver: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Phase-2 binding: hash of the exact plan approved (tool order + args).
+    action_hash: Mapped[str | None] = mapped_column(String(32), nullable=True)
     decision: Mapped[str] = mapped_column(String(32), default="pending")  # pending|approved|rejected
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
@@ -210,6 +212,21 @@ class ToolAudit(Base):
     approval_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class ToolIdempotency(Base):
+    """Phase-3 durability: write-once records survive process restarts.
+
+    The mock's in-memory `fired` dict is a cache; this table is the truth.
+    Unique key enforced by the database, so even a crash between external
+    execution and local bookkeeping cannot double-fire.
+    """
+
+    __tablename__ = "tool_idempotency"
+    idempotency_key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    formulation_id: Mapped[str] = mapped_column(String(64))
+    result_json: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 

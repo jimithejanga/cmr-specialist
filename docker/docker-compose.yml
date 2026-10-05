@@ -76,6 +76,34 @@ services:
     depends_on:
       - db
 
+  # Mock CMR registry operator service: separate process, separate port.
+  # The agent never calls it; it serves the operator console. Pilot runs it
+  # on SQLite in the shared volume; the VM points REGISTRY_DATABASE_URL at
+  # Postgres (own database/role) with no other change.
+  registry:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: ["python", "-m", "registry.service"]
+    ports:
+      - "${REGISTRY_PORT:-8081}:8081"
+    environment:
+      - REGISTRY_HOST=0.0.0.0
+      - REGISTRY_PORT=8081
+      - REGISTRY_DATABASE_URL=${REGISTRY_DATABASE_URL:-sqlite:////app/data/registry.db}
+      - REGISTRY_OPERATORS=${REGISTRY_OPERATORS:-}
+      - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg://cmr:${POSTGRES_PASSWORD:-cmr-secret}@db:5432/cmr}
+    volumes:
+      - harness_data:/app/data
+    depends_on:
+      - db
+      - web
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
 volumes:
   harness_data:
   pg_data:

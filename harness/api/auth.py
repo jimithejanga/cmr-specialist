@@ -102,6 +102,13 @@ def user_from_token(db: Session, token: str) -> M.User | None:
     return user
 
 
+def session_user(db: Session, authorization: Optional[str]) -> M.User | None:
+    """The logged-in human, if any. Machine API keys are NOT session users."""
+    if authorization and authorization.lower().startswith("bearer "):
+        return user_from_token(db, authorization[7:].strip())
+    return None
+
+
 def resolve_actor(db: Session, *, authorization: Optional[str],
                   x_api_key: Optional[str]) -> str | None:
     """Who is calling? Session user preferred, legacy API key as machine actor."""
@@ -132,7 +139,12 @@ def require_admin(db: Session, *, authorization: Optional[str],
 
 
 def ensure_schema(engine) -> None:
-    """Tolerant migration for pre-admin databases: add users.is_admin if absent."""
+    """Tolerant migrations for pre-existing databases."""
+    _ensure_users_admin(engine)
+    _ensure_approvals_hash(engine)
+
+
+def _ensure_users_admin(engine) -> None:
     from sqlalchemy import inspect, text
 
     try:
@@ -153,3 +165,20 @@ def ensure_schema(engine) -> None:
                     db.commit()
         finally:
             db.close()
+
+
+def _ensure_approvals_hash(engine) -> None:
+    from sqlalchemy import inspect, text
+
+    try:
+        cols = [c["name"] for c in inspect(engine).get_columns("approvals")]
+    except Exception:
+        return
+    if "action_hash" not in cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE approvals ADD COLUMN action_hash VARCHAR(32)"))
+    # Phase-3 table on pre-existing databases (fresh DBs get it via create_all).
+    try:
+        M.ToolIdempotency.__table__.create(bind=engine, checkfirst=True)
+    except Exception:
+        pass

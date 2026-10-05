@@ -61,8 +61,20 @@ class Settings(BaseModel):
     # API Settings
     HARNESS_API_KEY: str = os.getenv("HARNESS_API_KEY", "cmr-secret-key-2026")
     TOOL_MODULE_TOKEN: str = os.getenv("TOOL_MODULE_TOKEN", "cmr-tool-token-dev")
+    # Shed/pilot locks: STRICT_AUTH=1 fails closed (missing/invalid creds
+    # rejected everywhere; approvals need a session user; default secrets
+    # refused at startup). Default 0 keeps local-dev ergonomics.
+    STRICT_AUTH: bool = os.getenv("STRICT_AUTH", "0").lower() not in {"0", "false", "no"}
     HOST: str = os.getenv("HARNESS_HOST", "0.0.0.0")
     PORT: int = int(os.getenv("HARNESS_PORT", "8080"))
+
+    # Mock CMR registry: separate database (REGISTRY_DATABASE_URL, default
+    # var/registry.db). The dict backend is retired; the registry is the only
+    # backend. Pilot runs SQLite here; the VM points this at Postgres.
+    REGISTRY_DATABASE_URL: str = os.getenv(
+        "REGISTRY_DATABASE_URL",
+        f"sqlite:///{Path(__file__).resolve().parent.parent / 'var' / 'registry.db'}",
+    )
 
     # Lean spec (v2.0) — agent harness / worker / retrieval controls
     APP_VERSION: str = os.getenv("APP_VERSION", "2.0.0")
@@ -80,3 +92,23 @@ class Settings(BaseModel):
 
 
 settings = Settings()
+
+
+# Defaults that STRICT_AUTH refuses to run with (fail fast, not fail open).
+DEFAULT_API_KEY = "cmr-secret-key-2026"
+DEFAULT_TOOL_TOKEN = "cmr-tool-token-dev"
+
+
+def strict_auth() -> bool:
+    """Live env read so tests can toggle per-case (field is import-time)."""
+    return os.getenv("STRICT_AUTH", "0").lower() not in {"0", "false", "no"}
+
+
+def assert_pilot_secrets() -> None:
+    """Called at web/worker startup: default secrets + STRICT_AUTH = refuse."""
+    from configs.settings import settings as _s
+
+    if strict_auth() and (_s.HARNESS_API_KEY == DEFAULT_API_KEY
+                          or _s.TOOL_MODULE_TOKEN == DEFAULT_TOOL_TOKEN):
+        raise RuntimeError("STRICT_AUTH=1 with default secrets: set HARNESS_API_KEY "
+                           "and TOOL_MODULE_TOKEN to fresh values.")
