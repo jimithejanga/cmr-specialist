@@ -52,9 +52,12 @@ def init_registry_db(seed_if_empty: bool = True) -> None:
     from registry import models as _models  # noqa: F401 (register tables)
 
     RegistryBase.metadata.create_all(bind=engine)
+    # Portable "create view if missing": Postgres has no CREATE VIEW IF NOT
+    # EXISTS, so drop-then-create (the view is derived, never written to).
     with engine.begin() as conn:
+        conn.execute(text("DROP VIEW IF EXISTS active_certificates"))
         conn.execute(text(
-            "CREATE VIEW IF NOT EXISTS active_certificates AS "
+            "CREATE VIEW active_certificates AS "
             "SELECT * FROM certificates WHERE status = 'active'"))
     if seed_if_empty:
         from sqlalchemy import func, select

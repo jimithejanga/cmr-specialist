@@ -19,6 +19,15 @@ python -m harness.worker.worker
 Console: `http://localhost:8080` · API docs: `http://localhost:8080/docs` ·
 Health: `http://localhost:8080/health`
 
+## Ship it to a VM (finished product)
+
+```bash
+git clone https://github.com/jimithejanga/cmr-specialist.git && cd cmr-specialist
+sudo -E ./deploy/install.sh        # docker, secrets, admin, boot, backup proof
+```
+
+Full guide: `docs/DEPLOY.md`. Office-PC variant: `docs/OFFICE_PC_PILOT.md`.
+
 ## Tests
 
 ```bash

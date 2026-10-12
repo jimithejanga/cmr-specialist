@@ -1,4 +1,7 @@
 # Shed pilot shape: web + worker + Postgres (system of record) + nightly backup.
+# Office-PC profile ($0 option): this same file runs on a spare Ubuntu 22.04
+# PC with NO public IP / NO open ports. Remote devices reach it via
+# Cloudflare Tunnel (`tunnel` service below) or Tailscale (see docs/OFFICE_PC_PILOT.md).
 # Local dev can still use SQLite: DATABASE_URL=sqlite:////app/data/cmr_cases.db
 # Secrets come from the environment (.env file), never committed.
 
@@ -7,8 +10,12 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    # Localhost-only by default: tunnel/LAN reaches it via `tunnel` service.
+    # To expose on LAN directly, set WEB_BIND=0.0.0.0 in .env (not recommended).
+    # WEB_PORT/REGISTRY_PORT let a host with busy ports remap (test: 18080/18081).
     ports:
-      - "8080:8080"
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8080}:8080"
     environment:
       - HARNESS_HOST=0.0.0.0
       - HARNESS_PORT=8080
@@ -20,6 +27,7 @@ services:
       - INFERENCE_API_KEY=${INFERENCE_API_KEY:-}
       - HARNESS_API_KEY=${HARNESS_API_KEY:-cmr-secret-key-2026}
       - TOOL_MODULE_TOKEN=${TOOL_MODULE_TOKEN:-cmr-tool-token-dev}
+      - STRICT_AUTH=${STRICT_AUTH:-0}
     volumes:
       - harness_data:/app/data
     depends_on:
@@ -34,6 +42,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+    restart: unless-stopped
     command: ["python", "-m", "harness.worker.worker"]
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg://cmr:${POSTGRES_PASSWORD:-cmr-secret}@db:5432/cmr}
@@ -44,6 +53,7 @@ services:
       - INFERENCE_API_KEY=${INFERENCE_API_KEY:-}
       - TOOL_MODULE_TOKEN=${TOOL_MODULE_TOKEN:-cmr-tool-token-dev}
       - WORKER_POLL_INTERVAL_S=${WORKER_POLL_INTERVAL_S:-2.0}
+      - WEB_URL=http://web:8080
     volumes:
       - harness_data:/app/data
     depends_on:
@@ -52,17 +62,23 @@ services:
 
   db:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       - POSTGRES_USER=cmr
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-cmr-secret}
       - POSTGRES_DB=cmr
     volumes:
       - pg_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+      # Creates the cmr_registry database on first init (registry's own DB).
+      - ./init-db.sh:/docker-entrypoint-initdb.d/01-cmr-registry.sh:ro
+    # NOTE: no `ports:` — Postgres is reachable only inside compose (web/worker/backup).
+    # Never publish 5432 to the office LAN or internet for the pilot.
+    expose:
+      - "5432"
 
   backup:
     image: postgres:16-alpine
+    restart: unless-stopped
     command: ["/bin/sh", "-c", "while true; do /backup/nightly_backup.sh; sleep 86400; done"]
     environment:
       - PGHOST=db
@@ -72,25 +88,28 @@ services:
       - BACKUP_KEEP_DAYS=${BACKUP_KEEP_DAYS:-14}
     volumes:
       - ./backup.sh:/backup/nightly_backup.sh:ro
+      - ./restore.sh:/backup/restore-proof.sh:ro
       - pg_backups:/backups
     depends_on:
       - db
 
   # Mock CMR registry operator service: separate process, separate port.
-  # The agent never calls it; it serves the operator console. Pilot runs it
-  # on SQLite in the shared volume; the VM points REGISTRY_DATABASE_URL at
-  # Postgres (own database/role) with no other change.
+  # The agent never calls it; it serves the operator console. In compose it
+  # uses its own Postgres database (cmr_registry, created by init-db.sh).
+  # Local native dev can still use SQLite:
+  # REGISTRY_DATABASE_URL=sqlite:///./var/registry.db
   registry:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+    restart: unless-stopped
     command: ["python", "-m", "registry.service"]
     ports:
-      - "${REGISTRY_PORT:-8081}:8081"
+      - "${REGISTRY_BIND:-127.0.0.1}:${REGISTRY_PORT:-8081}:8081"
     environment:
       - REGISTRY_HOST=0.0.0.0
       - REGISTRY_PORT=8081
-      - REGISTRY_DATABASE_URL=${REGISTRY_DATABASE_URL:-sqlite:////app/data/registry.db}
+      - REGISTRY_DATABASE_URL=${REGISTRY_DATABASE_URL:-postgresql+psycopg://cmr:${POSTGRES_PASSWORD:-cmr-secret}@db:5432/cmr_registry}
       - REGISTRY_OPERATORS=${REGISTRY_OPERATORS:-}
       - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg://cmr:${POSTGRES_PASSWORD:-cmr-secret}@db:5432/cmr}
     volumes:
@@ -103,6 +122,27 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+
+  # Cloudflare Tunnel: exposes web (:8080) + registry (:8081) at your
+  # hostname with zero open ports. Opt-in: only starts with --profile tunnel.
+  #   1. cloudflared tunnel login && cloudflared tunnel create cmr-office
+  #   2. cloudflared tunnel route dns cmr-office cmr.youroffice.com
+  #   3. put the token in .env as TUNNEL_TOKEN, then:
+  #      docker compose --profile tunnel up -d --build
+  # Tailscale alternative (no Cloudflare account): install tailscale on the
+  # office PC (`tailscale up --advertise-exit-node=false`), then
+  # `tailscale serve 8080` — remote devices join the same tailnet.
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run", "--token", "${TUNNEL_TOKEN:-dummy}"]
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN:-}
+    depends_on:
+      - web
+      - registry
+    profiles:
+      - tunnel
 
 volumes:
   harness_data:

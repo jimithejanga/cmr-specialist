@@ -18,6 +18,7 @@ from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -75,6 +76,59 @@ def _operator(authorization: Optional[str] = Header(default=None)) -> str:
     if user.username not in _operators():
         raise HTTPException(status_code=403, detail="not a registry operator")
     return user.username
+
+
+class _LoginReq(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/auth/login", tags=["Auth"])
+def login(req: _LoginReq):
+    """Same-origin sign-in: shared users table, no :8080 round-trip.
+
+    The console used to POST to <host>:8080, which breaks when the two
+    services sit behind different public tunnel hosts. This endpoint
+    authenticates against the same agent users table locally and returns
+    a bearer token the registry accepts on every guarded route.
+    """
+    init_agent_db()
+    db = AgentSessionLocal()
+    try:
+        user = auth_mod.authenticate(db, username=req.username, password=req.password)
+        if not user:
+            raise HTTPException(status_code=401, detail="invalid username or password")
+        sess = auth_mod.issue_session(db, user)
+        return {"token": sess.token, "username": user.username,
+                "display_name": user.display_name,
+                "expires_at": sess.expires_at.isoformat()}
+    finally:
+        db.close()
+
+
+@app.post("/auth/logout", tags=["Auth"])
+def logout(authorization: Optional[str] = Header(default=None)):
+    init_agent_db()
+    db = AgentSessionLocal()
+    try:
+        if authorization and authorization.lower().startswith("bearer "):
+            auth_mod.revoke_session(db, authorization[7:].strip())
+    finally:
+        db.close()
+    return {"ok": True}
+
+
+@app.get("/auth/me", tags=["Auth"])
+def me(authorization: Optional[str] = Header(default=None)):
+    init_agent_db()
+    db = AgentSessionLocal()
+    try:
+        user = auth_mod.session_user(db, authorization)
+    finally:
+        db.close()
+    if user is None:
+        raise HTTPException(status_code=401, detail="login required")
+    return {"actor": user.username, "is_admin": bool(getattr(user, "is_admin", 0))}
 
 
 def _iso(v):

@@ -1,8 +1,9 @@
 /* Registry console shared helpers. Registry API is same-origin (this console
-   is served by the registry service); sign-in goes to the agent on :8080 of
-   the same host (portable across pilot laptop and VM). */
+   is served by the registry service); sign-in is same-origin too
+   (POST /auth/login on this service, shared users table) so it works when
+   web and registry sit behind different public hosts (e.g. tunnels). */
 const API = '';
-const AGENT = location.protocol + '//' + location.hostname + ':8080';
+const AGENT = '';
 function hdr(extra) {
   const h = Object.assign({'Content-Type': 'application/json'}, extra || {});
   const t = localStorage.getItem('cmr_token');
@@ -11,9 +12,14 @@ function hdr(extra) {
 }
 async function login() {
   const u = document.getElementById('u').value, p = document.getElementById('p').value;
-  const r = await fetch(AGENT + '/auth/login', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: u, password: p})});
-  const j = await r.json();
-  if (r.ok && j.token) { localStorage.setItem('cmr_token', j.token); document.getElementById('p').value = ''; }
+  const w = document.getElementById('who');
+  let r = null, j = null;
+  try {
+    r = await fetch(AGENT + '/auth/login', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: u, password: p})});
+    try { j = await r.json(); } catch (e) {}
+  } catch (e) { w.textContent = 'login request failed: network/unreachable'; return; }
+  if (r.ok && j && j.token) { localStorage.setItem('cmr_token', j.token); document.getElementById('p').value = ''; }
+  else { w.textContent = 'login failed: ' + ((j && j.detail) || (r && r.status)); return; }
   await whoami();
 }
 async function logout() {
